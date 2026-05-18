@@ -1,0 +1,33 @@
+# pre-commit hooks for windows-llm-bridge.
+# Install with:  pip install pre-commit && pre-commit install
+#
+# The sensitive-word guard is the non-negotiable one. Other hooks are
+# common-hygiene helpers.
+
+repos:
+  - repo: local
+    hooks:
+      - id: sensitive-words
+        name: "Block banned identifiers (CLAUDE.md § Banned words)"
+        entry: scripts/check_sensitive_words.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: sensitive-words-msg
+        name: "Block banned identifiers in commit message"
+        entry: bash -c 'for p in "pax(sz)?" "rk3576" "rk[-_ ]?sdk" "zhangbh" "/home/zhangbh" "10\\.0\\.25\\." ; do if grep -iE -- "$p" "$1" > /dev/null; then echo "Commit message contains banned pattern: $p"; exit 1; fi; done' --
+        language: system
+        stages: [commit-msg]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]

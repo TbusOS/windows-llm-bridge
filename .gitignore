@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 分发 / 打包产物
+build/
+dist/
+wheels/
+*.whl
+*.tar.gz
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 测试 / 覆盖率
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+coverage.xml
+*.cover
+
+# 类型检查 / lint 缓存
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ─────────────────────────────────────────────
+# uv
+# ─────────────────────────────────────────────
+# uv.lock 必须提交（锁版本），.python-version 必须提交（锁 Python 版本）
+# 唯一忽略的是 uv 的缓存
+.uv_cache/
+
+# ─────────────────────────────────────────────
+# IDE / 编辑器
+# ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─────────────────────────────────────────────
+# 项目运行时产物
+# ─────────────────────────────────────────────
+# workspace 是运行时目录：远端命令输出、抓取的文件、烧录工具日志等
+# 保留目录本身（.gitkeep），但所有内容不提交
+workspace/*
+!workspace/.gitkeep
+
+# 本机状态 / profile / 配置中的本地状态
+*.local.toml
+*.local.yaml
+config.local.*
+.wlb-state
+
+# SSH key / 证书（严禁误提交）
+*.pem
+*.key
+*_rsa
+*_ed25519
+*_ecdsa
+!*.pub.example
+id_rsa*
+id_ed25519*
+
+# Windows 端附带的二进制 / 烧录工具 / 固件镜像（按需本地放，不入仓）
+*.exe
+*.msi
+*.img
+*.bin
+*.iso
+
+# ─────────────────────────────────────────────
+# 日志 / 临时文件
+# ─────────────────────────────────────────────
+*.log
+logs/
+tmp/
+*.tmp
+
+# ─────────────────────────────────────────────
+# 前端（未来 Web UI 加进来时）
+# ─────────────────────────────────────────────
+node_modules/
+.next/
+.nuxt/
+.vite/
+.parcel-cache/
+
+# ─────────────────────────────────────────────
+# 文档构建产物
+# ─────────────────────────────────────────────
+docs/_build/
+docs/.cache/
+site/
+
+# ─────────────────────────────────────────────
+# 第三方设计素材（仅本机参考，不入 git）
+# ─────────────────────────────────────────────
+docs/reference/
+
+# ─────────────────────────────────────────────
+# 本地部署配置（真实主机名 / 凭证等 — 绝不提交）
+# ─────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─────────────────────────────────────────────
+# Secrets / personal / machine-specific — NEVER commit
+# ─────────────────────────────────────────────
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+# Use **/ prefix so the rules apply at any depth
+**/.claude/reports/screenshots/
+**/.claude/reports/web-check/
+# 任何 home 目录树（防误粘贴）
+**/home/*/
+
+# 杂项日志输出
+logs/
+*.jsonl

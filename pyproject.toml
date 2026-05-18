@@ -1,0 +1,178 @@
+[project]
+name = "windows-llm-bridge"
+version = "0.0.1"
+description = "A Windows shell / tool bridge designed for LLM agents (MCP / CLI / Web API)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "sky", email = "skyzhangbinghua@gmail.com" },
+]
+keywords = ["windows", "ssh", "powershell", "cmd", "llm", "mcp", "agent", "automation"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: System :: Systems Administration",
+    "Topic :: System :: Shells",
+]
+
+# ─────────────────────────────────────────────
+# Core runtime dependencies
+# ─────────────────────────────────────────────
+dependencies = [
+    # CLI
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+
+    # Config / serialization
+    "pydantic>=2.6.0",
+    "tomli-w>=1.0.0",              # tomllib reads in 3.11; writing needs this
+
+    # Transport
+    "asyncssh>=2.14.0",            # SSH to Windows OpenSSH Server
+
+    # MCP
+    "mcp>=0.9.0",                  # Model Context Protocol server
+
+    # Web API (M2 surface — skeleton ships with M1)
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+
+    # Async helpers
+    "anyio>=4.0.0",
+    "httpx>=0.26.0",               # HTTP transport (M2) + general client
+]
+
+[project.optional-dependencies]
+# Optional UI (M3)
+ui = [
+    "jinja2>=3.1.0",
+]
+all = [
+    "windows-llm-bridge[ui]",
+]
+
+# ─────────────────────────────────────────────
+# Entry points
+# ─────────────────────────────────────────────
+[project.scripts]
+wlb = "wlb.cli.main:main"
+wlb-mcp = "wlb.mcp.server:main"
+wlb-api = "wlb.api.server:main"
+
+[project.urls]
+Homepage = "https://github.com/TbusOS/windows-llm-bridge"
+Documentation = "https://github.com/TbusOS/windows-llm-bridge/tree/main/docs"
+Repository = "https://github.com/TbusOS/windows-llm-bridge"
+Issues = "https://github.com/TbusOS/windows-llm-bridge/issues"
+
+# ─────────────────────────────────────────────
+# Build system
+# ─────────────────────────────────────────────
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wlb"]
+
+# ─────────────────────────────────────────────
+# uv dependency groups (PEP 735)
+# ─────────────────────────────────────────────
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+    "pre-commit>=3.6.0",
+]
+
+# ─────────────────────────────────────────────
+# Ruff (lint + format)
+# ─────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "ASYNC",    # async best practices
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "E501",     # line length (ruff format handles)
+    "B008",     # function call in default (Typer idiom)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─────────────────────────────────────────────
+# Mypy
+# ─────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+pretty = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["mcp.*", "asyncssh.*"]
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────
+# Pytest
+# ─────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "integration: tests requiring a real Windows host (set WLB_TEST_SSH_HOST to enable)",
+    "slow: slow tests (> 5s)",
+    "mcp: MCP protocol tests",
+    "cli: CLI smoke tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/wlb"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
