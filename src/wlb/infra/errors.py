@@ -59,6 +59,20 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "If the host key legitimately changed, update known_hosts. Otherwise "
         "this may be a MITM — do not bypass.",
     ),
+    "SSH_KEY_NOT_FOUND": ErrorSpec(
+        "SSH_KEY_NOT_FOUND",
+        "transport",
+        "Configured SSH private key file does not exist",
+        "Check WLB_SSH_KEY points to a real file; generate one with: "
+        "ssh-keygen -t ed25519 -f ~/.ssh/wlb_ed25519",
+    ),
+    "SSH_CONNECTION_LOST": ErrorSpec(
+        "SSH_CONNECTION_LOST",
+        "transport",
+        "SSH connection dropped mid-operation",
+        "Check the Windows host is still reachable; check Get-WinEvent "
+        "-LogName 'OpenSSH/Operational' on the Windows side for clues",
+    ),
     "SHELL_NONZERO_EXIT": ErrorSpec(
         "SHELL_NONZERO_EXIT",
         "transport",

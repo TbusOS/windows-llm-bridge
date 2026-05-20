@@ -44,9 +44,10 @@ TRANSPORTS: list[TransportSpec] = [
     TransportSpec(
         name="ssh",
         impl_path="wlb.transport.ssh.SshTransport",
-        status="planned",
-        requires=["asyncssh", "OpenSSH Server on the Windows side"],
-        description="SSH to Windows OpenSSH Server (M1 primary).",
+        status="beta",
+        requires=["asyncssh", "Windows OpenSSH Server (TCP 22)"],
+        description="SSH to Windows OpenSSH Server. cmd / powershell (pwsh "
+                    "preferred with -EncodedCommand). Connect-per-call in M1.",
     ),
     TransportSpec(
         name="local",

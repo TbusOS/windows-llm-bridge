@@ -61,15 +61,16 @@ A side-by-side:
 
 ## Current capability matrix
 
-> This repo is currently at **M0 bootstrap**: the skeleton installs, runs,
-> and passes smoke tests. The real SSH path lands in M1.
-> See [`PLAN.md`](PLAN.md).
+> This repo is currently at **M1**: the SSH primary path is live (asyncssh,
+> cmd + powershell both work, PowerShell uses `-EncodedCommand` to avoid
+> quoting pitfalls). M2 will add filesync, named-tool runner, and an
+> HTTP fallback. See [`PLAN.md`](PLAN.md).
 
 ### Transports
 
 | Name   | Path                       | Status   | Purpose                                                |
 |--------|----------------------------|----------|--------------------------------------------------------|
-| ssh    | `wlb.transport.ssh`        | planned  | M1 primary: Windows OpenSSH Server, key auth           |
+| ssh    | `wlb.transport.ssh`        | beta     | Primary: Windows OpenSSH Server, asyncssh, key auth    |
 | local  | `wlb.transport.local`      | beta     | Loopback for unit tests                                |
 | http   | `wlb.transport.http`       | planned  | M2 fallback: Windows-side agent + HTTPS                |
 | hybrid | `wlb.transport.hybrid`     | planned  | M2 smart router: file → SFTP, cmd → SSH, offline → HTTP |

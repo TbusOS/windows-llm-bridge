@@ -53,14 +53,15 @@ Agent 的反馈闭环就断了。wlb 用结构化的工具桥把 Windows 接回 
 
 ## 当前能力矩阵
 
-> 本仓库现在处于 **M0 bootstrap**：骨架可装、可运行、能跑 smoke test，
-> 真正的 SSH 通路在 M1。详见 [`PLAN.md`](PLAN.md)。
+> 本仓库现在处于 **M1**：SSH 主通路真实现已完成（asyncssh，cmd + powershell
+> 都能跑，PowerShell 走 `-EncodedCommand` 避免引号噩梦），M2 是 filesync /
+> tool runner / HTTP 备用通路。详见 [`PLAN.md`](PLAN.md)。
 
 ### 传输
 
 | 名称   | 实现位置                       | 状态     | 用途                                              |
 |--------|--------------------------------|----------|---------------------------------------------------|
-| ssh    | `wlb.transport.ssh`            | planned  | M1 主通路：Windows OpenSSH Server，key-auth      |
+| ssh    | `wlb.transport.ssh`            | beta     | 主通路：Windows OpenSSH Server，asyncssh，key-auth |
 | local  | `wlb.transport.local`          | beta     | 本地测试用 loopback，单元测试基础                 |
 | http   | `wlb.transport.http`           | planned  | M2 备用通路：Windows 端跑微 agent，控制端 HTTP    |
 | hybrid | `wlb.transport.hybrid`         | planned  | M2 智能路由：file → SFTP，cmd → SSH，离线 → HTTP  |

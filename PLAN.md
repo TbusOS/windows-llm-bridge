@@ -10,8 +10,9 @@
 
 | Milestone | Goal                                             | Status      |
 |-----------|--------------------------------------------------|-------------|
-| **M0**    | Repo bootstrap (this commit)                     | in progress |
-| **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | planned |
+| **M0**    | Repo bootstrap                                   | shipped     |
+| **M1.1**  | SSH transport real (asyncssh, cmd/powershell)    | shipped     |
+| **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | planned     |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
 
@@ -53,16 +54,26 @@ becomes runnable.
 ### Work breakdown (file level)
 
 #### Transport layer
-- `src/wlb/transport/ssh.py` — real `SshTransport`:
-  - asyncssh client; connect + auth (key-only by default; password is
-    behind a `WLB_SSH_ALLOW_PASSWORD` env flag).
-  - `shell(cmd, timeout)` → spawns `cmd.exe /c <cmd>` by default; the
-    `interpreter` arg lets capability code switch to `powershell.exe -Command`.
-  - Connection pool (one open conn per host, idle timeout 30s).
-  - `health()` returns reachable / version / pwsh-present.
-  - `check_permissions()` delegates to default + a Windows-specific
-    transport overlay (e.g. reject `\\.\\PhysicalDrive*` writes).
-- `src/wlb/transport/local.py` — already in M0; harden for unit tests.
+- [x] `src/wlb/transport/ssh.py` — real `SshTransport` (M1.1, 2026-05-20):
+  - [x] asyncssh client; connect + key auth (password auth not wired —
+        default deny; can revisit behind a flag if anyone asks).
+  - [x] `shell(cmd, timeout)` runs through Windows OpenSSH default shell
+        (cmd.exe). `interpreter` flag dispatches to `pwsh.exe` /
+        `powershell.exe` with `-NoProfile -NonInteractive -EncodedCommand`
+        (base64 UTF-16LE) so quoting never escapes the outer cmd.exe layer.
+  - [x] Falls back from pwsh.exe to powershell.exe automatically when
+        the primary binary isn't on PATH.
+  - [x] `health()` returns reachable / Windows version / pwsh version /
+        connect duration.
+  - [x] Structured error mapping: TRANSPORT_NOT_CONFIGURED / SSH_AUTH_FAILED
+        / SSH_HOSTKEY_REJECTED / SSH_KEY_NOT_FOUND / SSH_HOST_UNREACHABLE /
+        SSH_CONNECTION_LOST / TIMEOUT_CONNECT / TIMEOUT_SHELL /
+        SHELL_NONZERO_EXIT / POWERSHELL_NOT_AVAILABLE.
+  - [ ] Connection pool (deferred to M2): currently open + close per call.
+        Adds ~one SSH handshake of latency per `shell()` — acceptable for
+        M1, worth fixing once we have a benchmark.
+  - [ ] `check_permissions()` transport overlay for SSH-specific rules.
+- [x] `src/wlb/transport/local.py` — covered by tests/transport/test_local.py.
 
 #### Capability layer
 - `src/wlb/capabilities/cmd.py` — already in M0; flesh out:

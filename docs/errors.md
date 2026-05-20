@@ -15,6 +15,8 @@ the docstring (but kept for backward compat).
 | `SSH_AUTH_FAILED`             | transport  | SSH key rejected / wrong user / permissions on key file.   |
 | `SSH_HOST_UNREACHABLE`        | transport  | TCP connection to the SSH port failed or timed out.        |
 | `SSH_HOSTKEY_REJECTED`        | transport  | The Windows host's key did not match `known_hosts`.        |
+| `SSH_KEY_NOT_FOUND`           | transport  | Configured SSH private key file does not exist on disk.    |
+| `SSH_CONNECTION_LOST`         | transport  | SSH connection dropped mid-operation.                      |
 | `SHELL_NONZERO_EXIT`          | transport  | The command ran but exited non-zero.                       |
 | `POWERSHELL_NOT_AVAILABLE`    | transport  | Neither `pwsh.exe` nor `powershell.exe` is on PATH.        |
 | `HOST_NOT_FOUND`              | host       | Configured host not reachable at all.                      |

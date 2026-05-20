@@ -108,8 +108,14 @@ async def execute(
 def _suggest_for(code: str | None) -> str:
     mapping = {
         "TIMEOUT_SHELL": "Increase --timeout; PowerShell startup is heavier than cmd",
+        "TIMEOUT_CONNECT": "Network reachable? Raise WLB_SSH_TIMEOUT, or check firewall",
         "TRANSPORT_NOT_CONFIGURED": "Run: wlb setup ssh (or set WLB_SSH_HOST in .env)",
         "TRANSPORT_NOT_SUPPORTED": "This transport is not yet implemented — see PLAN.md",
+        "SSH_AUTH_FAILED": "Check key permissions and authorized_keys on the Windows side",
+        "SSH_KEY_NOT_FOUND": "Check WLB_SSH_KEY path; generate with ssh-keygen if missing",
+        "SSH_HOSTKEY_REJECTED": "Update ~/.ssh/known_hosts if the host key legitimately changed",
+        "SSH_HOST_UNREACHABLE": "Confirm sshd is running on the Windows host: Get-Service sshd",
+        "SSH_CONNECTION_LOST": "Retry; if persistent, check Get-WinEvent -LogName OpenSSH/Operational",
         "POWERSHELL_NOT_AVAILABLE": (
             "Install PowerShell 7+ (winget install --id Microsoft.Powershell) "
             "or ensure Windows PowerShell 5 is on PATH"
