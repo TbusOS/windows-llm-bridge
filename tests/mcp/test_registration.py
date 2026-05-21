@@ -29,10 +29,11 @@ def test_register_all_attaches_expected_tools() -> None:
     register_all(_MockMcp())
 
     expected = {
-        "wlb_status", "wlb_describe",       # status capability
-        "wlb_cmd",                           # cmd capability
-        "wlb_powershell",                    # powershell capability
-        "wlb_push", "wlb_pull",              # filesync capability (M2.1)
+        "wlb_status", "wlb_describe",                              # status
+        "wlb_cmd",                                                  # cmd
+        "wlb_powershell",                                           # powershell
+        "wlb_push", "wlb_pull",                                     # filesync (M2.1)
+        "wlb_tool_list", "wlb_tool_show", "wlb_tool_run",           # tool (M2.3)
     }
     missing = expected - set(registered)
     assert not missing, f"missing MCP tools: {missing}"

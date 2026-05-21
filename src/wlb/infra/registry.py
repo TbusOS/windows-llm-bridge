@@ -116,11 +116,12 @@ CAPABILITIES: list[CapabilitySpec] = [
     CapabilitySpec(
         name="tool",
         impl_path="wlb.capabilities.tool",
-        cli_command="wlb tool list / run",
-        mcp_tools=["wlb_tool_list", "wlb_tool_run"],
-        supported_transports=["ssh", "http", "hybrid"],
-        status="planned",
-        description="Run a user-declared Windows tool with structured output (M2).",
+        cli_command="wlb tool list / show / run",
+        mcp_tools=["wlb_tool_list", "wlb_tool_show", "wlb_tool_run"],
+        supported_transports=["ssh", "local"],
+        status="beta",
+        description="Run user-declared Windows tools by name with progress/"
+                    "success/failure regex parsing and full log capture.",
     ),
 ]
 

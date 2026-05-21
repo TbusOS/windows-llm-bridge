@@ -24,6 +24,8 @@ class ErrorSpec:
 
 
 # Minimum catalog for the M0 skeleton; expand as capabilities are added in M1+.
+_TOOL_CATEGORY = "tool"
+
 ERROR_CODES: dict[str, ErrorSpec] = {
     # ── transport ────────────────────────────────────────────────
     "TRANSPORT_NOT_CONFIGURED": ErrorSpec(
@@ -175,6 +177,44 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "input",
         "Timeout value out of range",
         "Use an integer between 1 and 3600 seconds",
+    ),
+
+    # ── tool runner (M2.3) ───────────────────────────────────────
+    "TOOL_NOT_FOUND": ErrorSpec(
+        "TOOL_NOT_FOUND",
+        _TOOL_CATEGORY,
+        "Named tool is not declared in wlb-tools.toml",
+        "Run `wlb tool list` to see what's defined; check the spelling, "
+        "or add a [tool.<name>] section in workspace/wlb-tools.toml",
+    ),
+    "TOOLS_CONFIG_ERROR": ErrorSpec(
+        "TOOLS_CONFIG_ERROR",
+        _TOOL_CATEGORY,
+        "wlb-tools.toml is missing or malformed",
+        "Check the file at error.details.path; copy wlb-tools.example.toml "
+        "as a starting point and adjust",
+    ),
+    "TOOL_ARG_MISSING": ErrorSpec(
+        "TOOL_ARG_MISSING",
+        _TOOL_CATEGORY,
+        "Required tool argument was not provided",
+        "Run `wlb tool show <name>` to see required args; pass them as "
+        "`--arg key=value` (CLI) or `args` dict (MCP)",
+    ),
+    "TOOL_ARG_INVALID": ErrorSpec(
+        "TOOL_ARG_INVALID",
+        _TOOL_CATEGORY,
+        "Tool argument contains a forbidden character",
+        "Arguments cannot contain newlines, NULs, or shell metacharacters "
+        "(`;`, `&`, `|`, `<`, `>`, backtick, `$`). If you need those, "
+        "embed them inside the command_template, not in the value.",
+    ),
+    "TOOL_FAILED": ErrorSpec(
+        "TOOL_FAILED",
+        _TOOL_CATEGORY,
+        "Tool ran to completion but did not succeed",
+        "Inspect error.details: exit_code, failure_match, log_path. The "
+        "full output is in the saved log under workspace/hosts/.../tools/",
     ),
 
     # ── system ───────────────────────────────────────────────────

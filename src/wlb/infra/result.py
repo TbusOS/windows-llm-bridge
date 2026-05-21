@@ -28,6 +28,7 @@ ErrorCategory = Literal[
     "input",
     "system",
     "capability",
+    "tool",
 ]
 
 

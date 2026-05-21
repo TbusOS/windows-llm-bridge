@@ -1,0 +1,80 @@
+# windows-llm-bridge — example tool definitions
+#
+# Copy this file to `workspace/wlb-tools.toml` (or anywhere and point
+# `WLB_TOOLS_FILE` at it) and adjust the entries for your environment.
+#
+# Each `[tool.<name>]` table declares one named tool an LLM agent can
+# invoke via `wlb_tool_run` / `wlb tool run <name>`.
+#
+# Required fields:
+#   interpreter        cmd | powershell | raw
+#   command_template   the full command string, with {placeholder} substitutions
+#
+# Optional fields:
+#   description        human-readable summary (shown by `wlb tool list`)
+#   args               list of arg names that MUST be supplied at run time
+#   timeout            seconds before the command is killed (default 300)
+#   workdir            cd into this directory before running (cmd / powershell only)
+#   allow_dangerous    bypass ASK-level dangerous-pattern rules (default false)
+#
+# Optional [tool.<name>.regex] sub-table for output parsing:
+#   progress           regex with group 1 = a 0-100 integer percent
+#   success            regex; non-None match means the run succeeded
+#   failure            regex; any match marks the run as failed
+#
+# Argument values supplied at run time may NOT contain newlines, NULs,
+# or shell metacharacters (`;`, `&`, `|`, `<`, `>`, backtick, `$`).
+
+# ────────────────────────────────────────────────────────────────
+# A trivial smoke tool — confirms wlb-tools.toml is loaded.
+# Invoke: `wlb tool run echo --arg message=hi`
+# ────────────────────────────────────────────────────────────────
+[tool.echo]
+description       = "Echo a message back; the simplest possible tool."
+interpreter       = "cmd"
+command_template  = 'echo wlb-tool-echo: {message}'
+args              = ["message"]
+timeout           = 10
+
+[tool.echo.regex]
+success = "wlb-tool-echo:"
+
+# ────────────────────────────────────────────────────────────────
+# A PowerShell example demonstrating progress + success regex.
+# Invoke: `wlb tool run countdown --arg name=world`
+# ────────────────────────────────────────────────────────────────
+[tool.countdown]
+description       = "PowerShell tool emitting progress lines we can parse."
+interpreter       = "powershell"
+command_template  = '''
+Write-Host "Hello, {name}!"
+for ($i = 0; $i -le 100; $i += 25) {{
+    Write-Host "$i%"
+    Start-Sleep -Milliseconds 50
+}}
+Write-Host "done."
+'''
+args              = ["name"]
+timeout           = 30
+
+[tool.countdown.regex]
+progress = '^(\d{1,3})%'
+success  = '^done\.'
+
+# ────────────────────────────────────────────────────────────────
+# Template for a vendor flashing tool. Replace the command_template,
+# args, and regexes with what your tool actually emits.
+# ────────────────────────────────────────────────────────────────
+# [tool.flasher]
+# description       = "Vendor flashing utility (Windows-only binary)."
+# interpreter       = "raw"
+# command_template  = '"C:\tools\flash.exe" --image "{image}" --port "{port}"'
+# args              = ["image", "port"]
+# timeout           = 600
+# workdir           = 'C:\stage'
+# allow_dangerous   = false
+#
+# [tool.flasher.regex]
+# progress = '^(\d{1,3})%'
+# success  = 'Flash OK'
+# failure  = '^ERROR:.*'

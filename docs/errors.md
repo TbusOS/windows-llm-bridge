@@ -29,6 +29,11 @@ the docstring (but kept for backward compat).
 | `REMOTE_PATH_INVALID`         | io         | Remote path malformed / not writable / parent missing.     |
 | `SFTP_ERROR`                  | io         | SFTP server returned an error (generic, see details.stderr). |
 | `SFTP_NOT_AVAILABLE`          | io         | SFTP subsystem disabled on the remote sshd.                |
+| `TOOL_NOT_FOUND`              | tool       | Named tool isn't declared in `wlb-tools.toml`.             |
+| `TOOLS_CONFIG_ERROR`          | tool       | `wlb-tools.toml` is missing or malformed.                  |
+| `TOOL_ARG_MISSING`            | tool       | A required tool arg wasn't provided.                       |
+| `TOOL_ARG_INVALID`            | tool       | Tool arg contains a forbidden character.                   |
+| `TOOL_FAILED`                 | tool       | Tool ran but didn't succeed (failure_re / exit / etc).     |
 | `WORKSPACE_FULL`              | io         | wlb's workspace directory is out of space.                 |
 | `INVALID_HOST`                | input      | Configured host string is malformed.                       |
 | `INVALID_TIMEOUT`             | input      | Timeout value is out of the allowed range.                 |

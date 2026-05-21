@@ -17,6 +17,7 @@
 | **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
 | **M2.1**  | filesync — SFTP push/pull + LocalTransport copy           | shipped     |
 | **M2.2**  | SMB / Samba path translation + local-copy shortcut        | shipped     |
+| **M2.3**  | Tool runner — wlb-tools.toml + regex parsing + log capture | shipped    |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | in progress |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
 
@@ -195,21 +196,36 @@ project.
         reports `smb` / `sftp` / `local`. `wlb fs maps` inspects what's
         loaded + which mounts are reachable.
   - [ ] Progress callback (M2.3 with named-tool runner streaming).
-- `src/wlb/capabilities/tool.py`:
-  - `run_tool(name, args)` — looks up `name` in `wlb-tools.toml`:
-    ```toml
-    [tool.flasher]
-    interpreter   = "cmd"                 # or "powershell" / "raw"
-    command       = 'C:\tools\flash.exe'  # absolute path on Windows
-    args_template = '--image {image} --port {port}'
-    timeout       = 600
-    progress_re   = '^(\d{1,3})%'         # capture group 1 = percent
-    success_re    = 'Flash OK'
-    failure_re    = 'ERROR:.*'
-    workdir       = 'C:\stage'
-    ```
-  - Stream the tool's stdout/stderr line-by-line, emit progress events,
-    save the full log under `workspace/hosts/<host>/tools/<name>/<ts>.log`.
+- [x] `src/wlb/capabilities/tool.py` (M2.3, 2026-05-21):
+  - [x] `wlb.infra.tools_config`: TOML loader for `workspace/wlb-tools.toml`
+        (override via `WLB_TOOLS_FILE`). Lenient: malformed tools become
+        warnings, not hard errors. Validates interpreter / command_template /
+        timeout / args list / regex sub-table.
+  - [x] `list_tools()` / `show_tool(name)` / `run_tool(transport, name, args)`.
+  - [x] `str.format_map(args)` for template substitution. Required args
+        validated up-front. Values reject newlines / NULs / shell metachars
+        (`;` `&` `|` `<` `>` backtick `$`) so a single tool call can't
+        spawn a multi-statement shell sequence.
+  - [x] `workdir` wrapped per interpreter (`pushd ... && cmd & popd` for
+        cmd; `Push-Location ... try {{}} finally Pop-Location` for
+        powershell; raw passes through unchanged).
+  - [x] Full stdout+stderr saved to `workspace/hosts/<host>/tools/<name>/<ts>.log`
+        with a header (tool / interpreter / invoked / exit_code).
+  - [x] `progress_re` group 1 → last-seen percent; `success_re` /
+        `failure_re` parsed against combined output. Verdict:
+        `failure_match` → fail; `success_re` declared but no match →
+        fail; non-zero exit → fail.
+  - [x] Transport-level errors (timeout / auth / connection / permission)
+        preserved with their original `error_code` so the agent sees
+        the real cause.
+  - [x] 5 new error codes: `TOOL_NOT_FOUND` / `TOOLS_CONFIG_ERROR` /
+        `TOOL_ARG_MISSING` / `TOOL_ARG_INVALID` / `TOOL_FAILED`.
+  - [x] MCP: `wlb_tool_list` / `wlb_tool_show` / `wlb_tool_run`.
+  - [x] CLI: `wlb tool list / show / run --arg key=value`.
+  - [x] `wlb-tools.example.toml` template in the repo root.
+  - [ ] Live progress streaming (M3+): wraps stdout/stderr lines into
+        an AsyncIterator[StreamEvent]. M2.3 captures full output and
+        surfaces progress post-completion.
 - `src/wlb/capabilities/stream.py`:
   - Generic line-streaming helper shared by `tool.py` and a future
     `cmd --stream` mode.

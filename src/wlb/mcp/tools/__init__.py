@@ -9,6 +9,7 @@ from wlb.mcp.tools import cmd as cmd_tools
 from wlb.mcp.tools import filesync as filesync_tools
 from wlb.mcp.tools import powershell as powershell_tools
 from wlb.mcp.tools import status as status_tools
+from wlb.mcp.tools import tool as tool_tools
 
 
 def register_all(mcp) -> None:  # noqa: ANN001 — FastMCP import lazy in server
@@ -16,3 +17,4 @@ def register_all(mcp) -> None:  # noqa: ANN001 — FastMCP import lazy in server
     cmd_tools.register(mcp)
     powershell_tools.register(mcp)
     filesync_tools.register(mcp)
+    tool_tools.register(mcp)

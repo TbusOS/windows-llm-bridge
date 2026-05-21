@@ -19,6 +19,7 @@ from wlb.cli.common import get_transport, print_result, run_async
 from wlb.cli.doctor_cli import run_doctor
 from wlb.cli.filesync_cli import app as filesync_cli
 from wlb.cli.setup_cli import app as setup_cli
+from wlb.cli.tool_cli import app as tool_cli
 from wlb.infra.env_loader import load_env_files
 from wlb.infra.registry import CAPABILITIES, TRANSPORTS
 
@@ -127,6 +128,7 @@ def status(ctx: typer.Context) -> None:
 app.command("doctor", help="One-shot environment health check.")(run_doctor)
 app.add_typer(setup_cli, name="setup", help="Guided setup for each transport.")
 app.add_typer(filesync_cli, name="fs", help="File push / pull over the active transport.")
+app.add_typer(tool_cli, name="tool", help="Run declared Windows tools by name.")
 
 
 # ─── Shell commands ────────────────────────────────────────────────
