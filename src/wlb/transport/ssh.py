@@ -46,8 +46,10 @@ from typing import Any
 
 import asyncssh
 
+from collections.abc import AsyncIterator
+
 from wlb.transport import ssh_pool
-from wlb.transport.base import Interpreter, ShellResult, Transport
+from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
 
 _PWSH_PRIMARY = "pwsh.exe"
 _PWSH_FALLBACK = "powershell.exe"
@@ -127,8 +129,8 @@ def _proc_to_result(proc: asyncssh.SSHCompletedProcess, started_at: float) -> Sh
 
 class SshTransport(Transport):
     name = "ssh"
-    supports_files = True       # SFTP capability planned for M2
-    supports_streaming = True   # streaming planned for M2
+    supports_files = True       # SFTP capability shipped M2.1
+    supports_streaming = True   # real line-by-line streaming shipped M3.1
 
     def __init__(
         self,
@@ -176,6 +178,136 @@ class SshTransport(Transport):
 
     async def pull(self, remote: str, local: Path) -> ShellResult:
         return await self._sftp_transfer(local, remote, direction="pull")
+
+    async def run_streaming(
+        self,
+        cmd: str,
+        *,
+        interpreter: Interpreter = "cmd",
+        timeout: int = 30,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream a command's stdout / stderr over the pooled SSH connection.
+
+        Uses asyncssh's :meth:`SSHClientConnection.create_process` so we can
+        ``readline()`` off ``proc.stdout`` and ``proc.stderr`` as the remote
+        process emits data. PowerShell uses the same ``-EncodedCommand``
+        wrapping as :meth:`shell` so quoting through cmd.exe still works.
+
+        Connection death mid-run marks the pool entry dead and yields a
+        terminal ``"done"`` with ``SSH_CONNECTION_LOST``; the next call
+        will redial.
+        """
+        cfg_err = self._validate_config()
+        if cfg_err is not None:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code=cfg_err.error_code,
+                duration_ms=0,
+            )
+            return
+
+        started = time.monotonic()
+        conn, open_err = await self._acquire(started)
+        if conn is None:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code=open_err.error_code if open_err else "SSH_HOST_UNREACHABLE",
+                duration_ms=open_err.duration_ms if open_err else 0,
+            )
+            return
+
+        if interpreter == "powershell":
+            encoded = _encode_powershell(cmd)
+            full = f"{_PWSH_PRIMARY} -NoProfile -NonInteractive -EncodedCommand {encoded}"
+            # Streaming variant doesn't retry the powershell.exe fallback —
+            # pwsh.exe being missing surfaces as a single failed run. The
+            # operator can pin powershell.exe explicitly in their tool's
+            # command_template if they need it.
+        else:
+            full = cmd
+
+        key = self._pool_key()
+        try:
+            proc = await conn.create_process(full)
+        except asyncssh.ConnectionLost as e:
+            ssh_pool.mark_dead(key)
+            yield StreamEvent(
+                kind="done", exit_code=-1, error_code="SSH_CONNECTION_LOST",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+        except asyncssh.Error as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1, error_code="SSH_HOST_UNREACHABLE",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+
+        queue: asyncio.Queue = asyncio.Queue()
+        EOF = object()
+
+        async def pipe(reader: Any, label: str) -> None:
+            try:
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    text = line if isinstance(line, str) else line.decode("utf-8", errors="replace")
+                    await queue.put((text.rstrip("\r\n"), label))
+            finally:
+                await queue.put((EOF, label))
+
+        out_task = asyncio.create_task(pipe(proc.stdout, "stdout"))
+        err_task = asyncio.create_task(pipe(proc.stderr, "stderr"))
+
+        eofs = 0
+        deadline = started + max(1, int(timeout))
+        timed_out = False
+        try:
+            while eofs < 2:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.terminate()
+                    timed_out = True
+                    break
+                try:
+                    item, label = await asyncio.wait_for(queue.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    proc.terminate()
+                    timed_out = True
+                    break
+                if item is EOF:
+                    eofs += 1
+                    continue
+                yield StreamEvent(kind="line", line=item, stream=label)   # type: ignore[arg-type]
+        finally:
+            out_task.cancel()
+            err_task.cancel()
+
+        if timed_out:
+            yield StreamEvent(
+                kind="done", exit_code=-1, error_code="TIMEOUT_SHELL",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+
+        try:
+            await proc.wait()
+        except asyncssh.ConnectionLost:
+            ssh_pool.mark_dead(key)
+            yield StreamEvent(
+                kind="done", exit_code=-1, error_code="SSH_CONNECTION_LOST",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+
+        exit_code = proc.exit_status if proc.exit_status is not None else 0
+        yield StreamEvent(
+            kind="done",
+            exit_code=exit_code,
+            error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
 
     async def health(self) -> dict[str, Any]:
         out: dict[str, Any] = {

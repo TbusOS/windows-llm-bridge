@@ -34,6 +34,48 @@ class ShellResult:
     error_code: str | None = None  # Matches infra/errors.ERROR_CODES
 
 
+StreamKind = Literal["line", "progress", "match", "done"]
+
+
+@dataclass(frozen=True)
+class StreamEvent:
+    """One event from a streaming shell run (M3).
+
+    Yielded by :meth:`Transport.run_streaming` and consumed by capabilities
+    that want live progress (e.g. :func:`wlb.capabilities.tool.run_tool_stream`).
+
+    Event shapes by ``kind``:
+
+    - ``"line"``: one line off stdout / stderr.
+      ``line`` is the text (without the trailing newline);
+      ``stream`` is ``"stdout"`` or ``"stderr"``.
+
+    - ``"progress"``: a regex hit on the configured progress pattern.
+      ``percent`` is the parsed 0-100 integer.
+
+    - ``"match"``: a regex hit on the configured success / failure pattern.
+      ``pattern_label`` is ``"success"`` or ``"failure"``; ``match`` is the
+      matched substring.
+
+    - ``"done"``: terminal event. ``exit_code`` and ``error_code`` describe
+      the outcome (same conventions as :class:`ShellResult`).
+
+    Capabilities map these to their own domain-level events; transports
+    only emit ``"line"`` / ``"done"`` natively (progress / match are
+    capability-level enrichments).
+    """
+
+    kind: StreamKind
+    line: str | None = None
+    stream: Literal["stdout", "stderr"] | None = None
+    percent: int | None = None
+    pattern_label: Literal["progress", "success", "failure"] | None = None
+    match: str | None = None
+    exit_code: int = 0
+    error_code: str | None = None
+    duration_ms: int = 0
+
+
 @dataclass(frozen=True)
 class TransferEvent:
     """One progress / completion event from a streaming file transfer.
@@ -89,6 +131,44 @@ class Transport(ABC):
         the implementation runs the command string verbatim (used by
         capabilities that have already built the full invocation).
         """
+
+    # ── Streaming shell (M3) ──────────────────────────────────────
+    async def run_streaming(
+        self,
+        cmd: str,
+        *,
+        interpreter: Interpreter = "cmd",
+        timeout: int = 30,
+    ) -> AsyncIterator[StreamEvent]:
+        """Run ``cmd`` and yield :class:`StreamEvent`s as output arrives.
+
+        The default fallback simply calls :meth:`shell` and replays the
+        captured output as ``"line"`` events followed by a ``"done"``
+        event. Transports that have real streaming (Local subprocess,
+        SSH via ``conn.create_process``) override this with line-by-line
+        emission so progress / failure regex can fire mid-run.
+
+        Capabilities that consume this iterator should:
+
+        1. Treat ``"line"`` events as cumulative output (append to a log).
+        2. Run their regex parsing on each line as it arrives.
+        3. Trust ``"done"`` as the terminal event.
+
+        Yielding from a default fallback is correct but defeats the
+        streaming benefit — code that cares about latency should check
+        whether ``supports_streaming`` is True on the transport.
+        """
+        result = await self.shell(cmd, interpreter=interpreter, timeout=timeout)
+        for line in (result.stdout or "").splitlines():
+            yield StreamEvent(kind="line", line=line, stream="stdout")
+        for line in (result.stderr or "").splitlines():
+            yield StreamEvent(kind="line", line=line, stream="stderr")
+        yield StreamEvent(
+            kind="done",
+            exit_code=result.exit_code,
+            error_code=result.error_code,
+            duration_ms=result.duration_ms,
+        )
 
     # ── File transfer (M2) ────────────────────────────────────────
     async def push(self, local: Path, remote: str) -> ShellResult:

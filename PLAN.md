@@ -19,8 +19,9 @@
 | **M2.2**  | SMB / Samba path translation + local-copy shortcut        | shipped     |
 | **M2.3**  | Tool runner — wlb-tools.toml + regex parsing + log capture | shipped    |
 | **M2.4**  | HTTP transport + Windows-side wlb-agent micro-service     | shipped    |
-| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | shipped (M3 streaming deferred) |
-| **M3**    | Web UI + interactive PTY + skill packs           | planned     |
+| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | shipped |
+| **M3.1**  | Streaming — StreamEvent + run_streaming (local + ssh) + tool stream CLI | shipped |
+| **M3**    | Web UI + interactive PTY + skill packs + HTTP streaming  | in progress |
 
 ---
 

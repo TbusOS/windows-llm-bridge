@@ -10,9 +10,12 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
-from wlb.capabilities.tool import list_tools as cap_list_tools
-from wlb.capabilities.tool import run_tool as cap_run_tool
-from wlb.capabilities.tool import show_tool as cap_show_tool
+from wlb.capabilities.tool import (
+    list_tools as cap_list_tools,
+    run_tool as cap_run_tool,
+    run_tool_stream as cap_run_tool_stream,
+    show_tool as cap_show_tool,
+)
 from wlb.cli.common import get_transport, print_result, run_async
 
 app = typer.Typer(help="Run named tools declared in wlb-tools.toml.", no_args_is_help=True)
@@ -121,6 +124,13 @@ def run(
         help="Template argument as key=value. Repeat for multiple args. "
              "Example: --arg image=C:\\stage\\fw.bin --arg port=COM3",
     ),
+    stream: bool = typer.Option(
+        False,
+        "--stream",
+        "-s",
+        help="Stream output line-by-line. Live progress / match / line events "
+             "print as they arrive; a final summary follows.",
+    ),
 ) -> None:
     """Run a declared tool with the given args."""
     parsed: dict[str, str] = {}
@@ -132,5 +142,58 @@ def run(
         k, _, v = raw.partition("=")
         parsed[k.strip()] = v
     transport = get_transport(ctx)
-    result = run_async(cap_run_tool(transport, name, parsed))
-    print_result(ctx, result)
+
+    if not stream:
+        result = run_async(cap_run_tool(transport, name, parsed))
+        print_result(ctx, result)
+        return
+
+    # ── streaming path ──────────────────────────────────────────
+    import asyncio
+    json_mode = bool((ctx.obj or {}).get("json"))
+
+    async def _consume() -> int:
+        last_pct: int | None = None
+        async for ev in cap_run_tool_stream(transport, name, parsed):
+            if json_mode:
+                import json
+                print(json.dumps(ev.to_dict(), default=str), flush=True)
+                if ev.kind == "done":
+                    return 0 if ev.ok else 1
+                continue
+
+            if ev.kind == "line":
+                if ev.stream == "stderr":
+                    console.print(f"[yellow]{ev.line}[/]", highlight=False)
+                else:
+                    console.print(ev.line or "", highlight=False)
+            elif ev.kind == "progress":
+                if ev.percent != last_pct:
+                    last_pct = ev.percent
+                    console.print(f"[cyan]→ progress: {ev.percent}%[/]")
+            elif ev.kind == "match":
+                color = "green" if ev.pattern_label == "success" else "red"
+                console.print(f"[{color}]→ {ev.pattern_label}: {ev.match!r}[/]")
+            elif ev.kind == "done":
+                console.print()
+                if ev.ok and ev.output is not None:
+                    console.print(f"[green]✓ {name} succeeded[/] in {ev.output.duration_ms}ms")
+                    console.print(f"  log: {ev.output.log_path}")
+                    if ev.output.progress_percent is not None:
+                        console.print(f"  final progress: {ev.output.progress_percent}%")
+                    return 0
+                if ev.error_code:
+                    console.print(f"[red]✗ {ev.error_code}[/] — {ev.line or 'no detail'}")
+                else:
+                    out = ev.output
+                    if out is not None:
+                        console.print(f"[red]✗ TOOL_FAILED[/] (exit={out.exit_code})")
+                        if out.failure_match:
+                            console.print(f"  failure match: {out.failure_match!r}")
+                        console.print(f"  log: {out.log_path}")
+                return 1
+        return 1
+
+    exit_code = run_async(_consume())
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)

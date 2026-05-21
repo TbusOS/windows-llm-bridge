@@ -17,10 +17,11 @@ import asyncio
 import shutil
 import sys
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from wlb.transport.base import Interpreter, ShellResult, Transport
+from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
 
 
 def _path_size(path: Path) -> int:
@@ -39,7 +40,7 @@ def _path_size(path: Path) -> int:
 class LocalTransport(Transport):
     name = "local"
     supports_files = True       # local cp via shutil — used by tests
-    supports_streaming = False
+    supports_streaming = True   # real line-by-line subprocess streaming (M3.1)
 
     def __init__(self, *, on_windows: bool | None = None) -> None:
         # Allow tests to force the "we're on Windows" code path.
@@ -115,6 +116,95 @@ class LocalTransport(Transport):
             stderr=stderr,
             duration_ms=duration_ms,
             error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
+        )
+
+    async def run_streaming(
+        self,
+        cmd: str,
+        *,
+        interpreter: Interpreter = "cmd",
+        timeout: int = 30,
+    ) -> AsyncIterator[StreamEvent]:
+        """Real subprocess streaming: yield one StreamEvent per line of output.
+
+        Two reader tasks pump stdout / stderr into a shared queue; the main
+        loop drains the queue, emits ``"line"`` events, and stops once both
+        readers have hit EOF. A ``"done"`` event with the exit code is
+        always the last yield, even on timeout / spawn failure.
+        """
+        argv0, prefix = self._resolve_executable(interpreter)
+        started = time.monotonic()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                argv0, *prefix, cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1, error_code="SYSTEM_DEPENDENCY_MISSING",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+
+        queue: asyncio.Queue = asyncio.Queue()
+        EOF = object()                                         # sentinel
+
+        async def pipe(reader: asyncio.StreamReader | None, label: str) -> None:
+            if reader is None:
+                await queue.put((EOF, label))
+                return
+            try:
+                while True:
+                    raw = await reader.readline()
+                    if not raw:
+                        break
+                    text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                    await queue.put((text, label))
+            finally:
+                await queue.put((EOF, label))
+
+        out_task = asyncio.create_task(pipe(proc.stdout, "stdout"))
+        err_task = asyncio.create_task(pipe(proc.stderr, "stderr"))
+
+        eofs = 0
+        deadline = started + max(1, int(timeout))
+        try:
+            while eofs < 2:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    await proc.wait()
+                    yield StreamEvent(
+                        kind="done", exit_code=-1, error_code="TIMEOUT_SHELL",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+                    return
+                try:
+                    item, label = await asyncio.wait_for(queue.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    yield StreamEvent(
+                        kind="done", exit_code=-1, error_code="TIMEOUT_SHELL",
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+                    return
+                if item is EOF:
+                    eofs += 1
+                    continue
+                yield StreamEvent(kind="line", line=item, stream=label)   # type: ignore[arg-type]
+        finally:
+            out_task.cancel()
+            err_task.cancel()
+
+        await proc.wait()
+        exit_code = proc.returncode or 0
+        yield StreamEvent(
+            kind="done",
+            exit_code=exit_code,
+            error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
 
     async def push(self, local: Path, remote: str) -> ShellResult:

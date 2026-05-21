@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,7 @@ from wlb.infra.config import load_active
 from wlb.infra.result import Result, fail, ok
 from wlb.infra.tools_config import ToolSpec, find_tool, load_tools
 from wlb.infra.workspace import is_safe_host, iso_timestamp, workspace_path
-from wlb.transport.base import Transport
+from wlb.transport.base import StreamEvent, Transport
 
 # Reject anything that opens up command injection through arg substitution.
 # The tool's command_template author trusts the static template, not the
@@ -70,6 +71,47 @@ class ToolRunOutput:
             "log_path": self.log_path,
             "interpreter": self.interpreter,
             "via_transport": self.via_transport,
+        }
+
+
+@dataclass(frozen=True)
+class ToolStreamEvent:
+    """One event emitted by :func:`run_tool_stream`.
+
+    Wraps :class:`wlb.transport.base.StreamEvent` with tool-level enrichments:
+
+    - ``kind="line"`` — raw line from stdout / stderr (re-yielded as-is).
+    - ``kind="progress"`` — ``progress_re`` matched; ``percent`` is set.
+    - ``kind="match"`` — ``success_re`` or ``failure_re`` matched;
+      ``pattern_label`` identifies which.
+    - ``kind="done"`` — terminal event. ``output`` carries the same
+      :class:`ToolRunOutput` shape :func:`run_tool` would return; ``ok``
+      is the verdict (False on TOOL_FAILED-equivalent paths). On
+      transport-level failure (timeout / connection lost), ``error_code``
+      preserves the original transport code.
+    """
+
+    kind: str                         # "line" | "progress" | "match" | "done"
+    line: str | None = None
+    stream: str | None = None         # "stdout" / "stderr" for line kind
+    percent: int | None = None        # for progress kind
+    pattern_label: str | None = None  # "success" / "failure" for match kind
+    match: str | None = None          # the matched substring
+    ok: bool = True                   # for done kind
+    output: ToolRunOutput | None = None  # for done kind
+    error_code: str | None = None     # for done kind (transport-level errors)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "line": self.line,
+            "stream": self.stream,
+            "percent": self.percent,
+            "pattern_label": self.pattern_label,
+            "match": self.match,
+            "ok": self.ok,
+            "output": self.output.to_dict() if self.output else None,
+            "error_code": self.error_code,
         }
 
 
@@ -312,6 +354,226 @@ async def run_tool(
         artifacts=[log_path],
         timing_ms=duration_ms,
     )
+
+
+# ─── run_tool_stream (M3.1) ──────────────────────────────────────
+
+
+async def run_tool_stream(
+    transport: Transport,
+    name: str,
+    args: dict[str, str] | None = None,
+) -> AsyncIterator[ToolStreamEvent]:
+    """Stream a tool's output line-by-line; emit progress / match events live.
+
+    Same validation + workdir wrapping + log writing as :func:`run_tool`,
+    but events flow to the consumer as soon as each remote line arrives.
+
+    Workflow:
+        1. Look up the spec; validate args (same rules as run_tool).
+        2. Open the log file in append mode and stream each line into it.
+        3. For each ``line`` event from the transport, re-yield it AND run
+           the spec's progress / success / failure regexes against that line.
+           Regex hits become their own ``ToolStreamEvent("progress" | "match")``.
+        4. The terminal ``done`` event carries the final verdict + the
+           same ToolRunOutput payload :func:`run_tool` would produce.
+
+    Streaming behavior depends on the transport: LocalTransport and
+    SshTransport emit lines as they arrive; HttpTransport falls back to
+    capture-then-replay (until M3.2 adds a streaming agent endpoint).
+    """
+    args = args or {}
+    spec, warnings, _ = find_tool(name)
+    if spec is None:
+        yield ToolStreamEvent(
+            kind="done", ok=False, error_code="TOOL_NOT_FOUND",
+            line=f"tool {name!r} not declared in wlb-tools.toml",
+        )
+        return
+
+    # ── validate args (mirrors run_tool exactly) ─────────────────
+    for k, v in args.items():
+        if not isinstance(v, str):
+            yield ToolStreamEvent(
+                kind="done", ok=False, error_code="TOOL_ARG_INVALID",
+                line=f"arg {k!r}: value must be a string",
+            )
+            return
+        if _UNSAFE_ARG_CHARS.search(v):
+            yield ToolStreamEvent(
+                kind="done", ok=False, error_code="TOOL_ARG_INVALID",
+                line=f"arg {k!r}: value contains a forbidden character",
+            )
+            return
+
+    missing = [a for a in spec.args if a not in args]
+    if missing:
+        yield ToolStreamEvent(
+            kind="done", ok=False, error_code="TOOL_ARG_MISSING",
+            line=f"required args missing: {missing}",
+        )
+        return
+
+    try:
+        formatted = spec.command_template.format_map(args)
+    except KeyError as e:
+        yield ToolStreamEvent(
+            kind="done", ok=False, error_code="TOOL_ARG_MISSING",
+            line=f"command_template needs arg {e.args[0]!r}",
+        )
+        return
+
+    invoke = _wrap_workdir(formatted, spec)
+    host_id = _host_id(transport)
+    log_path = workspace_path(
+        f"tools/{name}", f"{iso_timestamp()}.log", host=host_id,
+    )
+
+    # ── compile regex once each ──────────────────────────────────
+    progress_rx = _safe_compile(spec.progress_re)
+    success_rx = _safe_compile(spec.success_re)
+    failure_rx = _safe_compile(spec.failure_re)
+
+    last_progress: int | None = None
+    success_match: str | None = None
+    failure_match: str | None = None
+    stdout_buf: list[str] = []
+    stderr_buf: list[str] = []
+    started = time.monotonic()
+
+    # ── open log file in append mode (header first) ──────────────
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_fp = log_path.open("a", encoding="utf-8", errors="replace")
+    try:
+        log_fp.write(
+            f"# wlb tool log (stream)\n"
+            f"# tool: {name}\n"
+            f"# interpreter: {spec.interpreter}\n"
+            f"# invoked: {invoke}\n"
+            f"# ---- stream ----\n"
+        )
+        log_fp.flush()
+
+        terminal_error_code: str | None = None
+        exit_code: int = 0
+
+        # ── consume transport stream ─────────────────────────────
+        async for ev in transport.run_streaming(
+            invoke, interpreter=spec.interpreter, timeout=spec.timeout,
+        ):
+            if ev.kind == "line":
+                line = ev.line or ""
+                # Mirror to log + buffer for stdout_tail.
+                log_fp.write(f"[{ev.stream}] {line}\n")
+                log_fp.flush()
+                if ev.stream == "stderr":
+                    stderr_buf.append(line)
+                else:
+                    stdout_buf.append(line)
+
+                yield ToolStreamEvent(
+                    kind="line", line=line, stream=ev.stream,
+                )
+
+                if progress_rx is not None:
+                    m = progress_rx.search(line)
+                    if m is not None:
+                        try:
+                            n = int(m.group(1))
+                            if 0 <= n <= 100:
+                                last_progress = n
+                                yield ToolStreamEvent(kind="progress", percent=n)
+                        except (IndexError, ValueError):
+                            pass
+
+                if success_match is None and success_rx is not None:
+                    m = success_rx.search(line)
+                    if m is not None:
+                        success_match = m.group(0)
+                        yield ToolStreamEvent(
+                            kind="match", pattern_label="success", match=success_match,
+                        )
+
+                if failure_match is None and failure_rx is not None:
+                    m = failure_rx.search(line)
+                    if m is not None:
+                        failure_match = m.group(0)
+                        yield ToolStreamEvent(
+                            kind="match", pattern_label="failure", match=failure_match,
+                        )
+
+            elif ev.kind == "done":
+                exit_code = ev.exit_code
+                terminal_error_code = ev.error_code
+                break
+            # Other event kinds from the transport are ignored — capabilities
+            # define their own taxonomy.
+    finally:
+        log_fp.close()
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout_text = "\n".join(stdout_buf)
+
+    # ── transport-level error → preserve original code ───────────
+    if terminal_error_code in _TRANSPORT_ERROR_CODES:
+        yield ToolStreamEvent(
+            kind="done", ok=False, error_code=terminal_error_code,
+            line=f"{name}: transport-level error",
+        )
+        return
+
+    output = ToolRunOutput(
+        tool=name,
+        command_invoked=invoke,
+        exit_code=exit_code,
+        duration_ms=duration_ms,
+        stdout_tail=_tail(stdout_text, _LOG_TAIL_LINES),
+        progress_percent=last_progress,
+        success=False,
+        success_match=success_match,
+        failure_match=failure_match,
+        log_path=str(log_path),
+        interpreter=spec.interpreter,
+        via_transport=transport.name,
+    )
+
+    # ── verdict (same logic as run_tool) ─────────────────────────
+    if failure_match is not None:
+        yield ToolStreamEvent(kind="done", ok=False, output=output)
+        return
+    if spec.success_re and success_match is None:
+        yield ToolStreamEvent(kind="done", ok=False, output=output)
+        return
+    if exit_code != 0:
+        yield ToolStreamEvent(kind="done", ok=False, output=output)
+        return
+
+    yield ToolStreamEvent(
+        kind="done",
+        ok=True,
+        output=ToolRunOutput(**{**output.to_dict(), "success": True}),
+    )
+
+
+_TRANSPORT_ERROR_CODES = {
+    "TIMEOUT_SHELL", "TIMEOUT_CONNECT",
+    "SSH_CONNECTION_LOST", "SSH_AUTH_FAILED", "SSH_HOST_UNREACHABLE",
+    "SSH_KEY_NOT_FOUND", "SSH_HOSTKEY_REJECTED",
+    "TRANSPORT_NOT_CONFIGURED", "TRANSPORT_NOT_SUPPORTED",
+    "PERMISSION_DENIED",
+    "HTTP_AUTH_FAILED", "HTTP_HOST_UNREACHABLE",
+    "HTTP_AGENT_ERROR", "HTTP_BAD_RESPONSE",
+    "SYSTEM_DEPENDENCY_MISSING",
+}
+
+
+def _safe_compile(pattern: str | None) -> re.Pattern[str] | None:
+    if not pattern:
+        return None
+    try:
+        return re.compile(pattern, re.MULTILINE)
+    except re.error:
+        return None
 
 
 # ─── helpers ─────────────────────────────────────────────────────
