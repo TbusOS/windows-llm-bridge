@@ -52,6 +52,43 @@ from wlb.transport.base import Interpreter, ShellResult, Transport
 _PWSH_PRIMARY = "pwsh.exe"
 _PWSH_FALLBACK = "powershell.exe"
 
+# SFTP file-type constant (from POSIX, used by asyncssh.SFTPAttrs.type).
+_SFTP_TYPE_DIR = 2
+
+
+def _attrs_is_dir(attrs: Any) -> bool:
+    """True if an SFTPAttrs describes a directory."""
+    return getattr(attrs, "type", None) == _SFTP_TYPE_DIR
+
+
+async def _remote_size(sftp: Any, remote: str) -> int:
+    """Best-effort size lookup for the post-push artifact on the remote side.
+
+    For directories, recursive walking via SFTP is expensive — return 0 and
+    let the caller decide whether to inspect further. For files, returns
+    the file size or 0 if the stat fails.
+    """
+    try:
+        attrs = await sftp.stat(remote)
+    except Exception:  # noqa: BLE001 — best-effort
+        return 0
+    if _attrs_is_dir(attrs):
+        return 0
+    return int(getattr(attrs, "size", 0) or 0)
+
+
+def _local_size(path: Path) -> int:
+    """Local-side size: file → bytes; dir → sum of file sizes (one os.walk)."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            total += p.stat().st_size
+    return total
+
 
 def _encode_powershell(script: str) -> str:
     """Base64-encode a script as UTF-16LE for PowerShell ``-EncodedCommand``."""
@@ -133,6 +170,12 @@ class SshTransport(Transport):
         if interpreter == "powershell":
             return await self._run_powershell(conn, cmd, timeout=timeout, started_at=started)
         return await self._run_cmd(conn, cmd, timeout=timeout, started_at=started)
+
+    async def push(self, local: Path, remote: str) -> ShellResult:
+        return await self._sftp_transfer(local, remote, direction="push")
+
+    async def pull(self, remote: str, local: Path) -> ShellResult:
+        return await self._sftp_transfer(local, remote, direction="pull")
 
     async def health(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -368,4 +411,97 @@ class SshTransport(Transport):
             stderr="neither pwsh.exe nor powershell.exe is available on the remote PATH",
             duration_ms=int((time.monotonic() - started_at) * 1000),
             error_code="POWERSHELL_NOT_AVAILABLE",
+        )
+
+    async def _sftp_transfer(
+        self,
+        local: Path,
+        remote: str,
+        *,
+        direction: str,
+    ) -> ShellResult:
+        """Common SFTP path for push (direction='push') and pull ('pull').
+
+        Push: ``local`` exists on the controller, ``remote`` is created on the host.
+        Pull: ``remote`` exists on the host, ``local`` is created on the controller.
+
+        Recursion is auto-detected by checking the source side (``local`` for push,
+        ``sftp.stat(remote).type`` for pull).
+        """
+        cfg_err = self._validate_config()
+        if cfg_err is not None:
+            return cfg_err
+
+        # Source-side existence check for push — fast-fail before opening SFTP.
+        if direction == "push" and not local.exists():
+            return ShellResult(
+                ok=False,
+                stderr=f"local path not found: {local}",
+                error_code="LOCAL_PATH_NOT_FOUND",
+            )
+
+        started = time.monotonic()
+        conn, open_err = await self._acquire(started)
+        if conn is None:
+            return open_err  # type: ignore[return-value]
+
+        key = self._pool_key()
+        try:
+            async with await conn.start_sftp_client() as sftp:
+                if direction == "push":
+                    recurse = local.is_dir()
+                    await sftp.put(str(local), remote, recurse=recurse, preserve=False)
+                    bytes_transferred = await _remote_size(sftp, remote)
+                else:  # pull
+                    remote_attrs = await sftp.stat(remote)
+                    recurse = _attrs_is_dir(remote_attrs)
+                    local.parent.mkdir(parents=True, exist_ok=True)
+                    await sftp.get(remote, str(local), recurse=recurse, preserve=False)
+                    bytes_transferred = _local_size(local)
+        except asyncssh.SFTPNoSuchFile as e:
+            code = "FILE_NOT_FOUND" if direction == "pull" else "REMOTE_PATH_INVALID"
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code=code,
+            )
+        except asyncssh.SFTPPermissionDenied as e:
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="REMOTE_PATH_INVALID",
+            )
+        except asyncssh.SFTPError as e:
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="SFTP_ERROR",
+            )
+        except asyncssh.ChannelOpenError as e:
+            # Most likely SFTP subsystem not enabled on the remote sshd.
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="SFTP_NOT_AVAILABLE",
+            )
+        except asyncssh.ConnectionLost as e:
+            ssh_pool.mark_dead(key)
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="SSH_CONNECTION_LOST",
+            )
+        except OSError as e:
+            # Local-side filesystem error during pull / read during push.
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="LOCAL_PATH_NOT_FOUND",
+            )
+
+        return ShellResult(
+            ok=True,
+            stdout=f"transferred {bytes_transferred} bytes ({direction})",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            artifacts=[local],
         )

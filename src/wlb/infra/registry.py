@@ -108,9 +108,10 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.capabilities.filesync",
         cli_command="wlb fs push / pull",
         mcp_tools=["wlb_push", "wlb_pull"],
-        supported_transports=["ssh", "http", "hybrid"],
-        status="planned",
-        description="File transfer via SFTP / SMB path translation (M2).",
+        supported_transports=["ssh", "local"],
+        status="beta",
+        description="File transfer via SFTP (ssh) or shutil (local). "
+                    "Auto-detects single-file vs recursive directory.",
     ),
     CapabilitySpec(
         name="tool",

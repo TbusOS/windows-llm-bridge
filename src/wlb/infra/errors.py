@@ -127,14 +127,34 @@ ERROR_CODES: dict[str, ErrorSpec] = {
     "FILE_NOT_FOUND": ErrorSpec(
         "FILE_NOT_FOUND",
         "io",
-        "Local file not found",
+        "File not found (remote pull source, or generic not-found)",
         "Check the path",
+    ),
+    "LOCAL_PATH_NOT_FOUND": ErrorSpec(
+        "LOCAL_PATH_NOT_FOUND",
+        "io",
+        "Local path (push source / pull destination parent) does not exist",
+        "Check the path; create the parent directory if needed",
     ),
     "REMOTE_PATH_INVALID": ErrorSpec(
         "REMOTE_PATH_INVALID",
         "io",
-        "Remote path is not allowed",
-        "Use a path inside an allow-listed area; avoid traversal",
+        "Remote path is malformed or not writable",
+        "Inspect error.details.stderr; ensure the parent directory exists "
+        "and the SSH user has write permission",
+    ),
+    "SFTP_ERROR": ErrorSpec(
+        "SFTP_ERROR",
+        "io",
+        "SFTP server returned an error",
+        "Inspect error.details.stderr for the remote-side message",
+    ),
+    "SFTP_NOT_AVAILABLE": ErrorSpec(
+        "SFTP_NOT_AVAILABLE",
+        "io",
+        "SFTP subsystem is not enabled on the remote SSH server",
+        "On the Windows side: Get-Service sshd; ensure the sftp subsystem "
+        "is enabled in sshd_config (default for Windows OpenSSH)",
     ),
     "WORKSPACE_FULL": ErrorSpec(
         "WORKSPACE_FULL",

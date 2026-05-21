@@ -24,8 +24,11 @@ the docstring (but kept for backward compat).
 | `PERMISSION_DENIED`           | permission | Command matched the dangerous-pattern deny-list.           |
 | `TIMEOUT_SHELL`               | timeout    | Command exceeded the `--timeout` value.                    |
 | `TIMEOUT_CONNECT`             | timeout    | SSH / HTTP connect exceeded its connect-timeout.           |
-| `FILE_NOT_FOUND`              | io         | Local file not found (push side).                          |
-| `REMOTE_PATH_INVALID`         | io         | Remote path failed validation (UNC / traversal / outside allow-list). |
+| `FILE_NOT_FOUND`              | io         | File not found — pull source missing, or generic not-found. |
+| `LOCAL_PATH_NOT_FOUND`        | io         | Local push source (or pull destination parent) does not exist. |
+| `REMOTE_PATH_INVALID`         | io         | Remote path malformed / not writable / parent missing.     |
+| `SFTP_ERROR`                  | io         | SFTP server returned an error (generic, see details.stderr). |
+| `SFTP_NOT_AVAILABLE`          | io         | SFTP subsystem disabled on the remote sshd.                |
 | `WORKSPACE_FULL`              | io         | wlb's workspace directory is out of space.                 |
 | `INVALID_HOST`                | input      | Configured host string is malformed.                       |
 | `INVALID_TIMEOUT`             | input      | Timeout value is out of the allowed range.                 |

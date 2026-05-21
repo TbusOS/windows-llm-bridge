@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 
-def test_register_all_attaches_three_tools() -> None:
-    """Mock FastMCP and confirm register_all() attaches the M0 tools.
+def test_register_all_attaches_expected_tools() -> None:
+    """Mock FastMCP and confirm register_all() attaches every wlb tool.
 
     We don't import the real ``mcp`` package here — we want this test to
     pass even on systems where the FastMCP server can't bind a stdio
     handle. The wlb.mcp.tools.register_all() function only needs a
     duck-typed object with a ``tool()`` decorator.
+
+    Acts as a regression guard: if a new capability ships without an MCP
+    tool wired up, this test catches the omission.
     """
     registered: list[str] = []
 
@@ -25,9 +28,13 @@ def test_register_all_attaches_three_tools() -> None:
 
     register_all(_MockMcp())
 
-    assert "wlb_status" in registered
-    assert "wlb_describe" in registered
-    assert "wlb_cmd" in registered
-    assert "wlb_powershell" in registered
-    # Exactly 4 tools in M0 — fail loudly if we accidentally regress to fewer.
-    assert len(registered) == 4
+    expected = {
+        "wlb_status", "wlb_describe",       # status capability
+        "wlb_cmd",                           # cmd capability
+        "wlb_powershell",                    # powershell capability
+        "wlb_push", "wlb_pull",              # filesync capability (M2.1)
+    }
+    missing = expected - set(registered)
+    assert not missing, f"missing MCP tools: {missing}"
+    # Fail loudly on accidental duplicates.
+    assert len(registered) == len(set(registered)), f"duplicate registration: {registered}"

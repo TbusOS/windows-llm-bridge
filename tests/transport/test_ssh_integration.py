@@ -94,3 +94,31 @@ async def test_permission_denied_command_is_refused(transport: SshTransport) -> 
     assert not r.ok
     assert r.error is not None
     assert r.error.code == "PERMISSION_DENIED"
+
+
+async def test_sftp_round_trip(transport: SshTransport, tmp_path: Any) -> None:
+    """Push a file to %TEMP% on Windows, pull it back, verify content matches.
+
+    Uses ``%TEMP%`` so we don't need to know an a-priori writable path on
+    the target host. The remote staging file is left in %TEMP% to be reaped
+    by the OS — wlb deliberately doesn't ship a remote-side delete tool.
+    """
+    from wlb.capabilities.filesync import pull as cap_pull
+    from wlb.capabilities.filesync import push as cap_push
+
+    payload = b"wlb-sftp-roundtrip-" + os.urandom(8).hex().encode()
+    src = tmp_path / "rt.bin"
+    src.write_bytes(payload)
+    dst = tmp_path / "rt_back.bin"
+
+    # Use a stable filename in %TEMP% on the Windows side.
+    remote = "%TEMP%\\wlb_sftp_roundtrip.bin"
+
+    push_r = await cap_push(transport, src, remote)
+    assert push_r.ok, push_r
+    assert push_r.data is not None
+    assert push_r.data.bytes_transferred == len(payload)
+
+    pull_r = await cap_pull(transport, remote, dst)
+    assert pull_r.ok, pull_r
+    assert dst.read_bytes() == payload

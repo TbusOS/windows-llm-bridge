@@ -17,14 +17,28 @@ import asyncio
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from wlb.transport.base import Interpreter, ShellResult, Transport
 
 
+def _path_size(path: Path) -> int:
+    """File → byte size; directory → recursive sum of file sizes."""
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            total += p.stat().st_size
+    return total
+
+
 class LocalTransport(Transport):
     name = "local"
-    supports_files = False
+    supports_files = True       # local cp via shutil — used by tests
     supports_streaming = False
 
     def __init__(self, *, on_windows: bool | None = None) -> None:
@@ -101,6 +115,66 @@ class LocalTransport(Transport):
             stderr=stderr,
             duration_ms=duration_ms,
             error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
+        )
+
+    async def push(self, local: Path, remote: str) -> ShellResult:
+        """Local push = shutil copy. ``remote`` is just another local path."""
+        started = time.monotonic()
+        if not local.exists():
+            return ShellResult(
+                ok=False,
+                stderr=f"local path not found: {local}",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="LOCAL_PATH_NOT_FOUND",
+            )
+        remote_path = Path(remote).expanduser()
+        try:
+            remote_path.parent.mkdir(parents=True, exist_ok=True)
+            if local.is_dir():
+                shutil.copytree(local, remote_path, dirs_exist_ok=True)
+            else:
+                shutil.copy2(local, remote_path)
+        except OSError as e:
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="REMOTE_PATH_INVALID",
+            )
+        return ShellResult(
+            ok=True,
+            stdout=f"transferred {_path_size(remote_path)} bytes (push)",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            artifacts=[local],
+        )
+
+    async def pull(self, remote: str, local: Path) -> ShellResult:
+        """Local pull = shutil copy in reverse. ``remote`` is another local path."""
+        started = time.monotonic()
+        remote_path = Path(remote).expanduser()
+        if not remote_path.exists():
+            return ShellResult(
+                ok=False,
+                stderr=f"remote path not found: {remote_path}",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="FILE_NOT_FOUND",
+            )
+        try:
+            local.parent.mkdir(parents=True, exist_ok=True)
+            if remote_path.is_dir():
+                shutil.copytree(remote_path, local, dirs_exist_ok=True)
+            else:
+                shutil.copy2(remote_path, local)
+        except OSError as e:
+            return ShellResult(
+                ok=False, stderr=str(e),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error_code="LOCAL_PATH_NOT_FOUND",
+            )
+        return ShellResult(
+            ok=True,
+            stdout=f"transferred {_path_size(local)} bytes (pull)",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            artifacts=[local],
         )
 
     async def health(self) -> dict[str, Any]:

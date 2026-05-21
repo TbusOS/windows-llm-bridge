@@ -15,7 +15,8 @@
 | **M1.2**  | TOML profiles + `wlb setup ssh` interactive + `--profile` flag | shipped |
 | **M1.3**  | SSH connection pool (per-host, lazy redial on ConnectionLost) | shipped |
 | **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
-| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | planned     |
+| **M2.1**  | filesync — SFTP push/pull + LocalTransport copy           | shipped     |
+| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | in progress |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
 
 ---
@@ -172,13 +173,20 @@ project.
 ### Work breakdown (file level)
 
 #### Capabilities
-- `src/wlb/capabilities/filesync.py`:
-  - `push(local, remote)` — SFTP over the existing SSH conn.
-  - `pull(remote, local)` — same.
-  - SMB/Samba shortcut: if the local path resolves to a mount that has
-    a `wlb-smb.toml` mapping to a Windows share, skip SFTP and just
-    let the Windows side see the file on its drive letter.
-  - Progress callback (used by stream variant in M2).
+- [x] `src/wlb/capabilities/filesync.py` (M2.1, 2026-05-21):
+  - [x] `push(transport, local, remote)` / `pull(transport, remote, local)` →
+        `Result[FileSyncOutput]` (local / remote / direction / bytes / duration).
+  - [x] SshTransport: `conn.start_sftp_client()` SFTP put/get with
+        `recurse=local.is_dir()` for push, `recurse=stat.type==DIR` for pull.
+  - [x] LocalTransport: `shutil.copy2` / `copytree` so capability tests are
+        hermetic and Windows-self-use works.
+  - [x] SFTP exception mapping: `SFTPNoSuchFile` / `SFTPPermissionDenied` →
+        `REMOTE_PATH_INVALID` (push) or `FILE_NOT_FOUND` (pull);
+        `SFTPError` → `SFTP_ERROR`; `ChannelOpenError` → `SFTP_NOT_AVAILABLE`;
+        `ConnectionLost` triggers `ssh_pool.mark_dead`.
+  - [ ] SMB/Samba shortcut (M2.2): translate `/mnt/win-share/...` ↔ `C:\share\...`
+        and skip SFTP when both sides see the same SMB volume.
+  - [ ] Progress callback (M2.2 with named-tool runner streaming).
 - `src/wlb/capabilities/tool.py`:
   - `run_tool(name, args)` — looks up `name` in `wlb-tools.toml`:
     ```toml
