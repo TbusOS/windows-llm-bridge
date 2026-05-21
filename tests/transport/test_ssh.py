@@ -92,8 +92,9 @@ async def test_cmd_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     conn.run.assert_awaited_once()
     sent_cmd = conn.run.await_args.args[0]
     assert sent_cmd == "ver"
-    # Connection is closed on the way out.
-    conn.close.assert_called_once()
+    # Connection is owned by the pool after a successful run — NOT closed here.
+    # The pool keeps the conn alive for reuse; close happens via ssh_pool.close_all().
+    conn.close.assert_not_called()
 
 
 async def test_cmd_nonzero_exit_maps_to_shell_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:

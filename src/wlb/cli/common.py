@@ -12,15 +12,29 @@ from rich.console import Console
 
 from wlb.infra.result import Result
 from wlb.mcp.transport_factory import build_transport
+from wlb.transport import ssh_pool
 from wlb.transport.base import Transport
 
 console = Console()
 
 
 def run_async(coro: Any) -> Any:
-    """Run an async coroutine from a sync typer handler."""
+    """Run an async coroutine from a sync typer handler.
+
+    Wraps the user coroutine so we always close the SSH connection pool on
+    the way out. CLI invocations are short-lived (one process per
+    ``uv run wlb …``), so the pool's main consumer is the long-lived MCP
+    server — it doesn't go through ``run_async`` and keeps its pool for the
+    process lifetime.
+    """
+    async def _wrap() -> Any:
+        try:
+            return await coro
+        finally:
+            await ssh_pool.close_all()
+
     try:
-        return asyncio.run(coro)
+        return asyncio.run(_wrap())
     except KeyboardInterrupt:
         console.print("\n[red]Interrupted[/]")
         raise typer.Exit(code=130) from None

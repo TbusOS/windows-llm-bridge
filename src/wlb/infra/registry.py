@@ -47,7 +47,8 @@ TRANSPORTS: list[TransportSpec] = [
         status="beta",
         requires=["asyncssh", "Windows OpenSSH Server (TCP 22)"],
         description="SSH to Windows OpenSSH Server. cmd / powershell (pwsh "
-                    "preferred with -EncodedCommand). Connect-per-call in M1.",
+                    "preferred with -EncodedCommand). Pooled connections "
+                    "keyed by (host, port, user, key, known_hosts, timeout).",
     ),
     TransportSpec(
         name="local",

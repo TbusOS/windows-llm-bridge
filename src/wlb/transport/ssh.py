@@ -1,9 +1,17 @@
 """SSH transport — drives a Windows OpenSSH Server via asyncssh.
 
-Connection model (M1):
-    Open a fresh asyncssh connection per ``shell()`` / ``health()`` call,
-    close it after. This pays one SSH handshake per command — acceptable
-    for the first release. M2 may add a per-host idle-pool to amortize.
+Connection model (M1.3):
+    Connections are pooled by
+    ``(host, port, user, key_path, known_hosts, connect_timeout)``.
+    The first ``shell()`` / ``health()`` call dials and stores the
+    connection in :mod:`wlb.transport.ssh_pool`. Subsequent calls with
+    the same parameters reuse it — one SSH handshake per host instead of
+    one per command. When ``run()`` raises :class:`asyncssh.ConnectionLost`,
+    the entry is marked dead and the next acquire redials.
+
+    The CLI's ``run_async`` wrapper flushes the pool on each invocation;
+    the MCP server keeps it for the lifetime of the process (which is
+    where pooling actually pays off).
 
 Interpreter dispatch:
     The Windows OpenSSH Server default shell is ``cmd.exe``, so any
@@ -38,6 +46,7 @@ from typing import Any
 
 import asyncssh
 
+from wlb.transport import ssh_pool
 from wlb.transport.base import Interpreter, ShellResult, Transport
 
 _PWSH_PRIMARY = "pwsh.exe"
@@ -114,16 +123,16 @@ class SshTransport(Transport):
             return cfg_err
 
         started = time.monotonic()
-        conn, open_err = await self._open(started)
+        conn, open_err = await self._acquire(started)
         if conn is None:
             return open_err  # type: ignore[return-value]
 
-        try:
-            if interpreter == "powershell":
-                return await self._run_powershell(conn, cmd, timeout=timeout, started_at=started)
-            return await self._run_cmd(conn, cmd, timeout=timeout, started_at=started)
-        finally:
-            await _safe_close(conn)
+        # Connection is owned by the pool — do NOT close here. ConnectionLost
+        # during run() triggers ssh_pool.mark_dead(key) so the next acquire
+        # redials cleanly.
+        if interpreter == "powershell":
+            return await self._run_powershell(conn, cmd, timeout=timeout, started_at=started)
+        return await self._run_cmd(conn, cmd, timeout=timeout, started_at=started)
 
     async def health(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -145,40 +154,45 @@ class SshTransport(Transport):
             return out
 
         started = time.monotonic()
-        conn, open_err = await self._open(started)
+        conn, open_err = await self._acquire(started)
         out["connect_ms"] = int((time.monotonic() - started) * 1000)
         if conn is None:
             out["stage"] = (open_err.stderr if open_err else "open failed")
             out["error_code"] = open_err.error_code if open_err else None
             return out
 
+        # Connection is pool-owned; we don't close it here either.
+        key = self._pool_key()
         try:
+            ver = await conn.run("ver", timeout=10)
+            if ver.exit_status == 0 and ver.stdout:
+                lines = [ln.strip() for ln in ver.stdout.splitlines() if ln.strip()]
+                out["windows_version"] = lines[-1] if lines else ""
+            else:
+                out["windows_version"] = "<probe failed>"
+        except asyncssh.ConnectionLost as e:  # pool entry just died
+            ssh_pool.mark_dead(key)
+            out["windows_version"] = f"<probe error: ConnectionLost: {e}>"
+        except Exception as e:  # noqa: BLE001 — best-effort probe
+            out["windows_version"] = f"<probe error: {type(e).__name__}>"
+
+        out["powershell"] = "<not available>"
+        for binary in (_PWSH_PRIMARY, _PWSH_FALLBACK):
             try:
-                ver = await conn.run("ver", timeout=10)
-                if ver.exit_status == 0 and ver.stdout:
-                    lines = [ln.strip() for ln in ver.stdout.splitlines() if ln.strip()]
-                    out["windows_version"] = lines[-1] if lines else ""
-                else:
-                    out["windows_version"] = "<probe failed>"
-            except Exception as e:  # noqa: BLE001
-                out["windows_version"] = f"<probe error: {type(e).__name__}>"
+                probe = await conn.run(
+                    f'{binary} -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"',
+                    timeout=10,
+                )
+            except asyncssh.ConnectionLost:
+                ssh_pool.mark_dead(key)
+                break
+            except Exception:  # noqa: BLE001 — best-effort probe
+                continue
+            if probe.exit_status == 0:
+                out["powershell"] = f"{binary} {(probe.stdout or '').strip()}"
+                break
 
-            out["powershell"] = "<not available>"
-            for binary in (_PWSH_PRIMARY, _PWSH_FALLBACK):
-                try:
-                    probe = await conn.run(
-                        f'{binary} -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"',
-                        timeout=10,
-                    )
-                except Exception:  # noqa: BLE001
-                    continue
-                if probe.exit_status == 0:
-                    out["powershell"] = f"{binary} {(probe.stdout or '').strip()}"
-                    break
-
-            out["ok"] = True
-        finally:
-            await _safe_close(conn)
+        out["ok"] = True
         return out
 
     # ── Internals ──────────────────────────────────────────────────
@@ -216,13 +230,35 @@ class SshTransport(Transport):
                 kw["known_hosts"] = os.path.expanduser(self.known_hosts)
         return kw
 
-    async def _open(self, started_at: float) -> tuple[asyncssh.SSHClientConnection | None, ShellResult | None]:
-        """Open an SSH connection or return a structured ShellResult on failure."""
-        try:
-            conn = await asyncio.wait_for(
+    def _pool_key(self) -> tuple:
+        """Identity tuple used to key the connection pool.
+
+        Every constructor field that affects the dial parameters is included
+        so two transports with different params get different connections.
+        """
+        return (
+            self.host,
+            self.port,
+            self.user,
+            self.key_path,
+            self.known_hosts,
+            self.connect_timeout,
+        )
+
+    async def _acquire(
+        self, started_at: float
+    ) -> tuple[asyncssh.SSHClientConnection | None, ShellResult | None]:
+        """Return a pooled connection or a structured ShellResult on dial failure."""
+        key = self._pool_key()
+
+        async def _dial() -> asyncssh.SSHClientConnection:
+            return await asyncio.wait_for(
                 asyncssh.connect(**self._connect_kwargs()),
                 timeout=self.connect_timeout,
             )
+
+        try:
+            conn = await ssh_pool.acquire(key, _dial)
             return conn, None
         except asyncio.TimeoutError:
             return None, ShellResult(
@@ -288,6 +324,8 @@ class SshTransport(Transport):
                 error_code="TIMEOUT_SHELL",
             )
         except asyncssh.ConnectionLost as e:
+            # Connection died mid-run; evict so the next acquire redials.
+            ssh_pool.mark_dead(self._pool_key())
             return ShellResult(
                 ok=False, stderr=str(e),
                 duration_ms=int((time.monotonic() - started_at) * 1000),
@@ -316,6 +354,7 @@ class SshTransport(Transport):
                     error_code="TIMEOUT_SHELL",
                 )
             except asyncssh.ConnectionLost as e:
+                ssh_pool.mark_dead(self._pool_key())
                 return ShellResult(
                     ok=False, stderr=str(e),
                     duration_ms=int((time.monotonic() - started_at) * 1000),
@@ -330,12 +369,3 @@ class SshTransport(Transport):
             duration_ms=int((time.monotonic() - started_at) * 1000),
             error_code="POWERSHELL_NOT_AVAILABLE",
         )
-
-
-async def _safe_close(conn: asyncssh.SSHClientConnection) -> None:
-    """Close ``conn`` swallowing any tear-down race that asyncssh raises."""
-    try:
-        conn.close()
-        await conn.wait_closed()
-    except Exception:  # noqa: BLE001 — tear-down should never bubble
-        pass

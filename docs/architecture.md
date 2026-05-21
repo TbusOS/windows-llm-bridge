@@ -59,6 +59,13 @@ The Windows host is whatever the configured transport reaches.
   `wlb.infra.permissions.default_check`; transports can layer additional
   rules on top).
 
+The SSH transport delegates connection lifetime to
+[`wlb.transport.ssh_pool`](../src/wlb/transport/ssh_pool.py): connections
+are keyed by `(host, port, user, key, known_hosts, timeout)`, dial once,
+and stay alive for the lifetime of the process (MCP server) or single
+invocation (CLI). `ConnectionLost` during `run()` marks the entry dead so
+the next `shell()` redials.
+
 ### Capability layer (`wlb.capabilities`)
 
 - One file per capability area. Each exposes one or two async functions.

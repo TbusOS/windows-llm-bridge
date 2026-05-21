@@ -13,6 +13,7 @@
 | **M0**    | Repo bootstrap                                   | shipped     |
 | **M1.1**  | SSH transport real (asyncssh, cmd/powershell)    | shipped     |
 | **M1.2**  | TOML profiles + `wlb setup ssh` interactive + `--profile` flag | shipped |
+| **M1.3**  | SSH connection pool (per-host, lazy redial on ConnectionLost) | shipped |
 | **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | planned     |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
@@ -70,9 +71,15 @@ becomes runnable.
         / SSH_HOSTKEY_REJECTED / SSH_KEY_NOT_FOUND / SSH_HOST_UNREACHABLE /
         SSH_CONNECTION_LOST / TIMEOUT_CONNECT / TIMEOUT_SHELL /
         SHELL_NONZERO_EXIT / POWERSHELL_NOT_AVAILABLE.
-  - [ ] Connection pool (deferred to M2): currently open + close per call.
-        Adds ~one SSH handshake of latency per `shell()` — acceptable for
-        M1, worth fixing once we have a benchmark.
+  - [x] Connection pool (M1.3, 2026-05-21): `wlb.transport.ssh_pool`.
+        Pool keyed by `(host, port, user, key, known_hosts, timeout)`.
+        Per-key `asyncio.Lock` serializes dials; same-key concurrent
+        acquires share one connection. asyncssh opens a fresh channel per
+        `run()`, so the shared conn handles concurrent runs safely.
+        `mark_dead(key)` on `ConnectionLost` evicts and redials on the
+        next acquire. CLI's `run_async` calls `close_all()` so per-process
+        invocations exit with an empty pool; the MCP server keeps the
+        pool for its lifetime.
   - [ ] `check_permissions()` transport overlay for SSH-specific rules.
 - [x] `src/wlb/transport/local.py` — covered by tests/transport/test_local.py.
 
