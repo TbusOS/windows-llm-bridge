@@ -60,9 +60,11 @@ TRANSPORTS: list[TransportSpec] = [
     TransportSpec(
         name="http",
         impl_path="wlb.transport.http.HttpTransport",
-        status="planned",
-        requires=["wlb-agent running on the Windows side"],
-        description="HTTP fallback when SSH is blocked (M2).",
+        status="beta",
+        requires=["httpx", "wlb-agent running on the Windows side"],
+        description="HTTP fallback when SSH is blocked. Talks to "
+                    "scripts/windows-agent/wlb_agent.py over HTTPS with a "
+                    "bearer token loaded from a mode-600 file.",
     ),
     TransportSpec(
         name="hybrid",
@@ -81,7 +83,7 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.capabilities.status",
         cli_command="wlb status / wlb describe",
         mcp_tools=["wlb_status", "wlb_describe"],
-        supported_transports=["ssh", "local", "http", "hybrid"],
+        supported_transports=["ssh", "local", "http"],
         status="beta",
         description="Host info, transport health, capability self-description.",
     ),
@@ -90,7 +92,7 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.capabilities.cmd",
         cli_command="wlb cmd <args>",
         mcp_tools=["wlb_cmd"],
-        supported_transports=["ssh", "local", "http", "hybrid"],
+        supported_transports=["ssh", "local", "http"],
         status="beta",
         description="Execute via cmd.exe /c with structured stdout/stderr/exit.",
     ),
@@ -99,7 +101,7 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.capabilities.powershell",
         cli_command="wlb powershell <args>",
         mcp_tools=["wlb_powershell"],
-        supported_transports=["ssh", "local", "http", "hybrid"],
+        supported_transports=["ssh", "local", "http"],
         status="beta",
         description="Execute via pwsh.exe or powershell.exe; auto-detect.",
     ),
@@ -108,10 +110,10 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.capabilities.filesync",
         cli_command="wlb fs push / pull",
         mcp_tools=["wlb_push", "wlb_pull"],
-        supported_transports=["ssh", "local"],
+        supported_transports=["ssh", "local", "http"],
         status="beta",
-        description="File transfer via SFTP (ssh) or shutil (local). "
-                    "Auto-detects single-file vs recursive directory.",
+        description="File transfer via SFTP (ssh), shutil (local), or "
+                    "HTTP multipart (http, single-file in M2.4).",
     ),
     CapabilitySpec(
         name="tool",

@@ -61,6 +61,35 @@ ERROR_CODES: dict[str, ErrorSpec] = {
         "If the host key legitimately changed, update known_hosts. Otherwise "
         "this may be a MITM — do not bypass.",
     ),
+    "HTTP_AUTH_FAILED": ErrorSpec(
+        "HTTP_AUTH_FAILED",
+        "transport",
+        "wlb-agent rejected the bearer token (HTTP 401)",
+        "Regenerate the token on the Windows side, copy the token file to "
+        "the controller (mode 600), and point WLB_HTTP_TOKEN_FILE at it. "
+        "See scripts/windows-agent/README.md.",
+    ),
+    "HTTP_HOST_UNREACHABLE": ErrorSpec(
+        "HTTP_HOST_UNREACHABLE",
+        "transport",
+        "Cannot reach wlb-agent at the configured URL",
+        "Confirm the agent is running on the Windows host and that TCP "
+        "is open in the firewall.",
+    ),
+    "HTTP_AGENT_ERROR": ErrorSpec(
+        "HTTP_AGENT_ERROR",
+        "transport",
+        "wlb-agent returned a 5xx error",
+        "Check the agent log on the Windows side; this is usually a "
+        "server-side bug or a misconfigured agent, not a wlb client issue.",
+    ),
+    "HTTP_BAD_RESPONSE": ErrorSpec(
+        "HTTP_BAD_RESPONSE",
+        "transport",
+        "wlb-agent returned a response wlb couldn't parse",
+        "Likely a version mismatch between the wlb client and the agent. "
+        "Update both sides.",
+    ),
     "SSH_KEY_NOT_FOUND": ErrorSpec(
         "SSH_KEY_NOT_FOUND",
         "transport",

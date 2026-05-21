@@ -18,7 +18,8 @@
 | **M2.1**  | filesync — SFTP push/pull + LocalTransport copy           | shipped     |
 | **M2.2**  | SMB / Samba path translation + local-copy shortcut        | shipped     |
 | **M2.3**  | Tool runner — wlb-tools.toml + regex parsing + log capture | shipped    |
-| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | in progress |
+| **M2.4**  | HTTP transport + Windows-side wlb-agent micro-service     | shipped    |
+| **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | shipped (M3 streaming deferred) |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
 
 ---

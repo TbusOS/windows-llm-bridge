@@ -55,9 +55,19 @@ class SshSettings:
 
 
 @dataclass(frozen=True)
+class HttpSettings:
+    url: str | None
+    token_file: str | None
+    ca_bundle: str | None
+    connect_timeout: int
+    verify_tls: bool = True
+
+
+@dataclass(frozen=True)
 class ActiveSettings:
     primary_transport: str
     ssh: SshSettings
+    http: HttpSettings
     smb_maps: list[SmbMap] = field(default_factory=list)
     profile_name: str = "default"
     profile_path: Path | None = None       # absolute path; None if no file
@@ -135,6 +145,7 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
     data, warnings = _load_profile_file(path)
     host_section = data.get("host", {}) if isinstance(data.get("host"), dict) else {}
     ssh_section = data.get("ssh", {}) if isinstance(data.get("ssh"), dict) else {}
+    http_section = data.get("http", {}) if isinstance(data.get("http"), dict) else {}
 
     transport_value = _layer("WLB_TRANSPORT", host_section, "transport", "ssh")
     transport = str(transport_value) if transport_value is not None else "ssh"
@@ -142,6 +153,13 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
     env_maps = parse_smb_env(os.environ.get("WLB_SMB_MAPS"))
     profile_maps = parse_smb_toml(data.get("smb_maps"))
     smb_maps = merge_smb_maps(env_maps, profile_maps)
+
+    # HTTP verify_tls: env "0"/"false"/"no" disables; default is True.
+    verify_env = os.environ.get("WLB_HTTP_VERIFY_TLS")
+    if verify_env is not None and verify_env != "":
+        verify_tls = verify_env.lower() not in ("0", "false", "no", "off")
+    else:
+        verify_tls = bool(http_section.get("verify_tls", True)) if isinstance(http_section, dict) else True
 
     return ActiveSettings(
         primary_transport=transport,
@@ -154,6 +172,13 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
                 _layer("WLB_SSH_KNOWN_HOSTS", ssh_section, "known_hosts", None)
             ),
             connect_timeout=_layer_int("WLB_SSH_TIMEOUT", ssh_section, "connect_timeout", 10),
+        ),
+        http=HttpSettings(
+            url=_str_or_none(_layer("WLB_HTTP_URL", http_section, "url", None)),
+            token_file=_str_or_none(_layer("WLB_HTTP_TOKEN_FILE", http_section, "token_file", None)),
+            ca_bundle=_str_or_none(_layer("WLB_HTTP_CA_BUNDLE", http_section, "ca_bundle", None)),
+            connect_timeout=_layer_int("WLB_HTTP_TIMEOUT", http_section, "connect_timeout", 10),
+            verify_tls=verify_tls,
         ),
         smb_maps=smb_maps,
         profile_name=name,

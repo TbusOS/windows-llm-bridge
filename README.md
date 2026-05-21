@@ -63,7 +63,7 @@ Agent 的反馈闭环就断了。wlb 用结构化的工具桥把 Windows 接回 
 |--------|--------------------------------|----------|---------------------------------------------------|
 | ssh    | `wlb.transport.ssh`            | beta     | 主通路：Windows OpenSSH Server，asyncssh，key-auth |
 | local  | `wlb.transport.local`          | beta     | 本地测试用 loopback，单元测试基础                 |
-| http   | `wlb.transport.http`           | planned  | M2 备用通路：Windows 端跑微 agent，控制端 HTTP    |
+| http   | `wlb.transport.http`           | beta     | 备用通路：Windows 端跑 wlb-agent 微服务（FastAPI），控制端 httpx + Bearer token（save-to-file）+ 可选 TLS |
 | hybrid | `wlb.transport.hybrid`         | planned  | M2 智能路由：file → SFTP，cmd → SSH，离线 → HTTP  |
 
 ### 能力

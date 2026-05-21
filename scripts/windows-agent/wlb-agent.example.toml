@@ -1,0 +1,20 @@
+# wlb-agent — Windows-side micro-service config
+#
+# Copy this file to (for example) C:\ProgramData\wlb-agent\wlb-agent.toml,
+# fill in the values, restrict the file's ACL (administrators + SYSTEM only),
+# and start the agent:
+#
+#     python wlb_agent.py --config C:\ProgramData\wlb-agent\wlb-agent.toml
+
+# Network
+bind = "0.0.0.0"            # 0.0.0.0 = all interfaces; "127.0.0.1" for loopback-only
+port = 8443                  # TCP port to listen on
+
+# Token — point at a file containing exactly the bearer token, one line.
+# Permissions: only the agent's service account + Administrators should
+# be able to read this file.
+token_file = 'C:\ProgramData\wlb-agent\token'
+
+# TLS (recommended). Comment out both lines to run plain HTTP (lab only).
+tls_cert = 'C:\ProgramData\wlb-agent\agent.crt'
+tls_key  = 'C:\ProgramData\wlb-agent\agent.key'

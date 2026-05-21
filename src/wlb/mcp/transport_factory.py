@@ -54,8 +54,11 @@ def build_transport(
         return LocalTransport()
     if which == "http":
         return HttpTransport(
-            base_url=os.environ.get("WLB_HTTP_URL"),
-            token=os.environ.get("WLB_HTTP_TOKEN"),
+            base_url=settings.http.url,
+            token_file=settings.http.token_file,
+            ca_bundle=settings.http.ca_bundle,
+            connect_timeout=settings.http.connect_timeout,
+            verify_tls=settings.http.verify_tls,
         )
     if which == "hybrid":
         return HybridTransport()

@@ -72,7 +72,7 @@ A side-by-side:
 |--------|----------------------------|----------|--------------------------------------------------------|
 | ssh    | `wlb.transport.ssh`        | beta     | Primary: Windows OpenSSH Server, asyncssh, key auth    |
 | local  | `wlb.transport.local`      | beta     | Loopback for unit tests                                |
-| http   | `wlb.transport.http`       | planned  | M2 fallback: Windows-side agent + HTTPS                |
+| http   | `wlb.transport.http`       | beta     | Fallback: Windows-side wlb-agent (FastAPI) + httpx client with bearer token (save-to-file) and optional TLS |
 | hybrid | `wlb.transport.hybrid`     | planned  | M2 smart router: file → SFTP, cmd → SSH, offline → HTTP |
 
 ### Capabilities

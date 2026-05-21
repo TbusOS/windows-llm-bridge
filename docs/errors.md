@@ -19,6 +19,10 @@ the docstring (but kept for backward compat).
 | `SSH_CONNECTION_LOST`         | transport  | SSH connection dropped mid-operation.                      |
 | `SHELL_NONZERO_EXIT`          | transport  | The command ran but exited non-zero.                       |
 | `POWERSHELL_NOT_AVAILABLE`    | transport  | Neither `pwsh.exe` nor `powershell.exe` is on PATH.        |
+| `HTTP_AUTH_FAILED`            | transport  | wlb-agent rejected the bearer token (HTTP 401).            |
+| `HTTP_HOST_UNREACHABLE`       | transport  | wlb-agent URL didn't respond / connection refused.         |
+| `HTTP_AGENT_ERROR`            | transport  | wlb-agent returned a 5xx error.                            |
+| `HTTP_BAD_RESPONSE`           | transport  | wlb-agent returned something wlb couldn't parse.           |
 | `HOST_NOT_FOUND`              | host       | Configured host not reachable at all.                      |
 | `HOST_REBOOTING`              | host       | Host is mid-reboot; commands not yet runnable.             |
 | `PERMISSION_DENIED`           | permission | Command matched the dangerous-pattern deny-list.           |
