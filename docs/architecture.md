@@ -66,6 +66,12 @@ and stay alive for the lifetime of the process (MCP server) or single
 invocation (CLI). `ConnectionLost` during `run()` marks the entry dead so
 the next `shell()` redials.
 
+[`wlb.infra.smb_maps`](../src/wlb/infra/smb_maps.py) provides Linux↔Windows
+path translation for `wlb fs push|pull`. When the destination falls under
+a configured SMB mount and the Linux mount is reachable, the capability
+copies via `shutil` on the Linux side instead of SFTP — Windows sees the
+file through the share immediately, no protocol round-trip.
+
 ### Capability layer (`wlb.capabilities`)
 
 - One file per capability area. Each exposes one or two async functions.

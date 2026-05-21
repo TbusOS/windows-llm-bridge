@@ -16,6 +16,7 @@
 | **M1.3**  | SSH connection pool (per-host, lazy redial on ConnectionLost) | shipped |
 | **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
 | **M2.1**  | filesync — SFTP push/pull + LocalTransport copy           | shipped     |
+| **M2.2**  | SMB / Samba path translation + local-copy shortcut        | shipped     |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | in progress |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
 
@@ -184,9 +185,16 @@ project.
         `REMOTE_PATH_INVALID` (push) or `FILE_NOT_FOUND` (pull);
         `SFTPError` → `SFTP_ERROR`; `ChannelOpenError` → `SFTP_NOT_AVAILABLE`;
         `ConnectionLost` triggers `ssh_pool.mark_dead`.
-  - [ ] SMB/Samba shortcut (M2.2): translate `/mnt/win-share/...` ↔ `C:\share\...`
-        and skip SFTP when both sides see the same SMB volume.
-  - [ ] Progress callback (M2.2 with named-tool runner streaming).
+  - [x] SMB/Samba shortcut (M2.2, 2026-05-21): `wlb.infra.smb_maps`
+        — translate `/mnt/win-share/...` ↔ `C:\share\...` (Linux case-
+        sensitive, Windows case-insensitive). Configured via
+        `WLB_SMB_MAPS` env (`linux=windows;linux=windows`) or profile
+        `[[smb_maps]]` array. `wlb fs push|pull` accepts either form
+        and skips SFTP when the mount root is reachable. Silent fall-
+        back to SFTP when the mount isn't mounted. `FileSyncOutput.via`
+        reports `smb` / `sftp` / `local`. `wlb fs maps` inspects what's
+        loaded + which mounts are reachable.
+  - [ ] Progress callback (M2.3 with named-tool runner streaming).
 - `src/wlb/capabilities/tool.py`:
   - `run_tool(name, args)` — looks up `name` in `wlb-tools.toml`:
     ```toml

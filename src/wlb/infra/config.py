@@ -31,6 +31,12 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wlb.infra.smb_maps import (
+    SmbMap,
+    merge as merge_smb_maps,
+    parse_env_value as parse_smb_env,
+    parse_toml_array as parse_smb_toml,
+)
 from wlb.infra.workspace import (
     InvalidProfileName,
     is_safe_profile_name,
@@ -52,6 +58,7 @@ class SshSettings:
 class ActiveSettings:
     primary_transport: str
     ssh: SshSettings
+    smb_maps: list[SmbMap] = field(default_factory=list)
     profile_name: str = "default"
     profile_path: Path | None = None       # absolute path; None if no file
     profile_loaded: bool = False           # True if file existed and parsed
@@ -132,6 +139,10 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
     transport_value = _layer("WLB_TRANSPORT", host_section, "transport", "ssh")
     transport = str(transport_value) if transport_value is not None else "ssh"
 
+    env_maps = parse_smb_env(os.environ.get("WLB_SMB_MAPS"))
+    profile_maps = parse_smb_toml(data.get("smb_maps"))
+    smb_maps = merge_smb_maps(env_maps, profile_maps)
+
     return ActiveSettings(
         primary_transport=transport,
         ssh=SshSettings(
@@ -144,6 +155,7 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
             ),
             connect_timeout=_layer_int("WLB_SSH_TIMEOUT", ssh_section, "connect_timeout", 10),
         ),
+        smb_maps=smb_maps,
         profile_name=name,
         profile_path=path,
         profile_loaded=path.exists() and not warnings,

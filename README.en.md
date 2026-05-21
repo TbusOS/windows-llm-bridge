@@ -82,7 +82,7 @@ A side-by-side:
 | status     | `wlb status` / `describe` | `wlb_status` / `wlb_describe`  | beta     | Host info, transport health                       |
 | cmd        | `wlb cmd <args>`          | `wlb_cmd`                      | beta     | Run via `cmd.exe /c`                              |
 | powershell | `wlb powershell <args>`   | `wlb_powershell`               | beta     | Auto-detect PS 5 vs 7+, structured output         |
-| filesync   | `wlb fs push|pull`        | `wlb_push` / `wlb_pull`        | beta     | SFTP push/pull (recursive dirs auto-detected); M2.2 adds SMB path translation |
+| filesync   | `wlb fs push|pull` / `maps` | `wlb_push` / `wlb_pull`      | beta     | SFTP push/pull + SMB path translation + local-copy shortcut (skips SFTP when the mount is reachable) |
 | tool       | `wlb tool run <name>`     | `wlb_tool_run`                 | planned  | M2: user-declared tool with progress/success regex |
 
 ---
