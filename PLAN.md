@@ -12,6 +12,7 @@
 |-----------|--------------------------------------------------|-------------|
 | **M0**    | Repo bootstrap                                   | shipped     |
 | **M1.1**  | SSH transport real (asyncssh, cmd/powershell)    | shipped     |
+| **M1.2**  | TOML profiles + `wlb setup ssh` interactive + `--profile` flag | shipped |
 | **M1**    | First usable release — SSH transport + cmd/powershell + status/describe + MCP + CLI | in progress |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | planned     |
 | **M3**    | Web UI + interactive PTY + skill packs           | planned     |
@@ -95,24 +96,36 @@ becomes runnable.
   flesh out docstrings to match the alb tone.
 
 #### CLI layer
-- `src/wlb/cli/{status,cmd,powershell,setup,doctor}_cli.py` — already in M0;
-  flesh out:
-  - `wlb setup ssh` — interactive: ask host, port, user, key path; write
-    to `workspace/profiles/default.toml`.
-  - `wlb doctor` — same shape as alb's: probe each subsystem, print a
-    Rich table of OK / WARN / FAIL.
+- [x] `wlb setup ssh` (M1.2, 2026-05-21) — interactive prompt for host /
+      port / user / key / known_hosts / timeout (defaults from existing
+      profile if any). Atomic write to `workspace/profiles/<name>.toml`
+      with mode 600. `--non-interactive` for scripted use. Re-runnable.
+- [x] `wlb setup local` — writes a local-loopback profile.
+- [x] `wlb setup show` — prints merged active settings + source per key.
+- [x] `wlb setup list` — lists every profile on disk.
+- [x] `wlb setup path` — prints absolute path of a profile file.
+- [x] `wlb doctor` extended with a "profile" probe (active name + loaded?
+      + file path).
 
 #### Infrastructure
-- `src/wlb/infra/config.py` — `ActiveSettings` dataclass + `load_active()`.
-  Profile TOML schema:
+- [x] `src/wlb/infra/config.py` — `load_active(profile_name=None)` layers
+      env > profile > built-in defaults. Profile resolution: arg →
+      `WLB_PROFILE` env → `"default"`. Corrupt files surface as a
+      `profile_warnings` entry, not a hard error.
+- Profile TOML schema (as actually written by `wlb setup ssh`):
   ```toml
   [host]
-  ssh_host  = "<win-host>"
-  ssh_port  = 22
-  ssh_user  = "<user>"
-  ssh_key   = "~/.ssh/id_ed25519"
+  transport = "ssh"
+
+  [ssh]
+  host          = "<win-host>"
+  port          = 22
+  user          = "<user>"
+  key           = "~/.ssh/wlb_ed25519"
+  known_hosts   = ""          # optional; "none" disables host-key check (tests only)
+  connect_timeout = 10        # optional; default 10
   ```
-- `src/wlb/infra/env_loader.py` — load `.env` / `.env.local`.
+- [x] `src/wlb/infra/env_loader.py` — loads `.env` / `.env.local`.
 
 #### Tests
 - `tests/transport/test_local.py` — local transport returns structured.

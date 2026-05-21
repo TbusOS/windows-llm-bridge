@@ -89,17 +89,20 @@ cd windows-llm-bridge
 # 2. 在 Windows 端启用 OpenSSH Server（详见 docs/windows-side-setup.md）
 #    把 scripts/windows-setup/enable-openssh.ps1 拷过去，以管理员跑一次
 
-# 3. 配置 SSH 目标
-cp .env.example .env
-$EDITOR .env       # 填 WLB_SSH_HOST / WLB_SSH_USER / WLB_SSH_KEY
+# 3. 配置 SSH 目标（交互式，写到 workspace/profiles/default.toml）
+uv run wlb setup ssh
+#    多主机：uv run wlb setup ssh --profile homelab
+#    脚本化：uv run wlb setup ssh --non-interactive --host ... --user ... --yes
 
 # 4. 自检
 uv run wlb describe
 uv run wlb status
+uv run wlb setup show           # 看合并后的 env > profile > default
 
-# 5. 跑命令（M1 通路启用后）
+# 5. 跑命令
 uv run wlb cmd "ver"
 uv run wlb powershell "Get-ComputerInfo | Select-Object OsName, OsVersion"
+#    切 profile: uv run wlb --profile homelab cmd "ver"
 ```
 
 把 wlb 接到 Claude Code（或 Cursor / Codex）作为 MCP server：

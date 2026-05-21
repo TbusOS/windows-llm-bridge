@@ -38,13 +38,27 @@ console = Console()
 def _main_options(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Structured JSON output."),
+    profile: str | None = typer.Option(
+        None, "--profile", "-p", help="Profile name to activate (workspace/profiles/<name>.toml)."
+    ),
     transport: str | None = typer.Option(
         None, "--transport", help="Override transport: ssh|local|http|hybrid."
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output."),
 ) -> None:
+    # Validate the profile name early so bad input shows a friendly error
+    # rather than a Python traceback from deeper in the stack.
+    if profile is not None:
+        from wlb.infra.workspace import is_safe_profile_name
+
+        if not is_safe_profile_name(profile):
+            raise typer.BadParameter(
+                f"invalid profile name {profile!r}: must match [A-Za-z0-9][A-Za-z0-9_-]*",
+                param_hint="--profile",
+            )
     ctx.obj = {
         "json": json_output,
+        "profile": profile,
         "transport": transport,
         "verbose": verbose,
     }

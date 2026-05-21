@@ -99,17 +99,20 @@ cd windows-llm-bridge
 #    (copy scripts/windows-setup/enable-openssh.ps1 over and run as admin)
 #    See docs/windows-side-setup.md
 
-# 3. Configure the SSH target
-cp .env.example .env
-$EDITOR .env       # set WLB_SSH_HOST / WLB_SSH_USER / WLB_SSH_KEY
+# 3. Configure the SSH target (interactive — writes workspace/profiles/default.toml)
+uv run wlb setup ssh
+#    Multi-host:    uv run wlb setup ssh --profile homelab
+#    Scripted/CI:   uv run wlb setup ssh --non-interactive --host ... --user ... --yes
 
 # 4. Self-check
 uv run wlb describe
 uv run wlb status
+uv run wlb setup show           # see merged env > profile > defaults
 
-# 5. Run commands (once M1 lands)
+# 5. Run commands
 uv run wlb cmd "ver"
 uv run wlb powershell "Get-ComputerInfo | Select-Object OsName, OsVersion"
+#    Switch profile: uv run wlb --profile homelab cmd "ver"
 ```
 
 Register wlb with Claude Code (or Cursor / Codex) as an MCP server:

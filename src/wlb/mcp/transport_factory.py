@@ -13,21 +13,32 @@ from wlb.transport.ssh import SshTransport
 
 
 _cached_settings: ActiveSettings | None = None
+_cached_profile_key: str | None = None
 
 
-def active_settings(force_reload: bool = False) -> ActiveSettings:
-    global _cached_settings
-    if _cached_settings is None or force_reload:
-        _cached_settings = load_active()
+def active_settings(
+    profile_name: str | None = None, *, force_reload: bool = False
+) -> ActiveSettings:
+    """Return cached settings, re-resolving when the profile name changes."""
+    global _cached_settings, _cached_profile_key
+    key = profile_name or os.environ.get("WLB_PROFILE") or "default"
+    if force_reload or _cached_settings is None or _cached_profile_key != key:
+        _cached_settings = load_active(profile_name)
+        _cached_profile_key = key
     return _cached_settings
 
 
-def build_transport(*, override: str | None = None) -> Transport:
+def build_transport(
+    *,
+    override: str | None = None,
+    profile_name: str | None = None,
+) -> Transport:
     """Resolve and instantiate the active transport.
 
-    Precedence: explicit ``override`` > ``WLB_TRANSPORT`` env > settings.
+    Precedence for transport selection:
+        explicit ``override`` > ``WLB_TRANSPORT`` env > settings (env > profile > default).
     """
-    settings = active_settings()
+    settings = active_settings(profile_name)
     which = override or os.environ.get("WLB_TRANSPORT") or settings.primary_transport
 
     if which == "ssh":
@@ -49,3 +60,4 @@ def build_transport(*, override: str | None = None) -> Transport:
     if which == "hybrid":
         return HybridTransport()
     raise ValueError(f"unknown transport: {which}")
+

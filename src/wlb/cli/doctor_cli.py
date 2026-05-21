@@ -26,7 +26,7 @@ from wlb.mcp.transport_factory import build_transport
 console = Console()
 
 
-def run_doctor(ctx: typer.Context) -> None:  # noqa: ARG001 — needs ctx for typer
+def run_doctor(ctx: typer.Context) -> None:
     """Run a one-shot health check."""
     table = Table(title="wlb doctor")
     table.add_column("probe")
@@ -42,8 +42,17 @@ def run_doctor(ctx: typer.Context) -> None:  # noqa: ARG001 — needs ctx for ty
         f"{py} on {platform.system()} {platform.release()}",
     )
 
+    # Active profile (honor --profile flag)
+    profile_name = (ctx.obj or {}).get("profile")
+    settings = load_active(profile_name)
+    profile_state = "loaded" if settings.profile_loaded else "no file"
+    table.add_row(
+        "profile",
+        "[green]OK[/]" if settings.profile_loaded else "[yellow]WARN[/]",
+        f"{settings.profile_name} ({profile_state}) — {settings.profile_path}",
+    )
+
     # Config
-    settings = load_active()
     cfg_ok = bool(settings.ssh.host) if settings.primary_transport == "ssh" else True
     table.add_row(
         "config",
@@ -53,9 +62,9 @@ def run_doctor(ctx: typer.Context) -> None:  # noqa: ARG001 — needs ctx for ty
         f"ssh_user={settings.ssh.user or '<unset>'}",
     )
 
-    # Transport health
+    # Transport health (honor --profile flag)
     try:
-        transport = build_transport()
+        transport = build_transport(profile_name=profile_name)
         import asyncio
 
         health = asyncio.run(transport.health())

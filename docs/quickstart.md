@@ -78,19 +78,47 @@ You should see something like `Microsoft Windows [Version 10.0.19045.xxxx]`.
 
 ## 4. Configure wlb
 
-```bash
-cp .env.example .env
-$EDITOR .env
-```
-
-Fill in:
+Run the interactive setup:
 
 ```bash
-WLB_SSH_HOST=<win-host>          # hostname or IP
-WLB_SSH_PORT=22
-WLB_SSH_USER=<your-windows-user>
-WLB_SSH_KEY=~/.ssh/wlb_ed25519
+uv run wlb setup ssh
 ```
+
+It will prompt for host / port / user / key path / known_hosts / timeout,
+defaulting from any existing profile. The result is written to
+`workspace/profiles/default.toml` (atomically, mode 600). Re-run any time
+to update.
+
+Non-interactive (CI-friendly):
+
+```bash
+uv run wlb setup ssh --non-interactive \
+    --host <win-host> --user <your-windows-user> \
+    --key ~/.ssh/wlb_ed25519 --yes
+```
+
+Named profiles for multi-target setups:
+
+```bash
+uv run wlb setup ssh --profile homelab --host homelab-box --user admin
+uv run wlb --profile homelab status     # use it
+WLB_PROFILE=homelab uv run wlb status   # or via env
+```
+
+Inspect what's loaded and where each value comes from:
+
+```bash
+uv run wlb setup show              # default profile
+uv run wlb --profile homelab setup show
+uv run wlb setup list              # all profiles on disk
+uv run wlb setup path              # absolute path of default.toml
+```
+
+Env vars (`WLB_SSH_HOST`, etc.) always win over profile values, so a
+one-off override is just `WLB_SSH_HOST=other-host wlb cmd "ver"`.
+
+`.env` / `.env.local` still work for users who prefer that style — see
+`.env.example`.
 
 ---
 

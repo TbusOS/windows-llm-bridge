@@ -29,8 +29,9 @@ def run_async(coro: Any) -> Any:
 def get_transport(ctx: typer.Context, *, override: str | None = None) -> Transport:
     """Resolve the active transport. Shared with the MCP layer."""
     which = override or (ctx.obj or {}).get("transport")
+    profile = (ctx.obj or {}).get("profile")
     try:
-        return build_transport(override=which)
+        return build_transport(override=which, profile_name=profile)
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
 
