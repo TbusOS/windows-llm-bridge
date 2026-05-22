@@ -42,10 +42,44 @@ HTTPS (default 8443) ───────────────────�
 |--------|---------------------------|--------------------------------------------|-------------------------------------------|
 | GET    | `/v1/health`              | —                                          | `{ok, agent_version, platform, windows_version, powershell}` |
 | POST   | `/v1/shell`               | `{cmd, interpreter, timeout}`              | `{ok, exit_code, stdout, stderr, duration_ms, error_code?}`  |
+| POST   | `/v1/shell/stream` (M3.2) | `{cmd, interpreter, timeout}`              | NDJSON stream (`application/x-ndjson`) — see below |
 | POST   | `/v1/file/push?path=...`  | raw bytes (`application/octet-stream`)     | `{ok, bytes, path}`                       |
 | GET    | `/v1/file/pull?path=...`  | —                                          | bytes (`application/octet-stream`)        |
 
 All requests require `Authorization: Bearer <token>`.
+
+### `/v1/shell/stream` (M3.2)
+
+Streaming variant of `/v1/shell`. The response body is
+`application/x-ndjson` — one JSON object per line, terminated by `\n`.
+Each line matches the wlb `StreamEvent` schema:
+
+```
+{"kind":"line","line":"step 1/3 ...","stream":"stdout"}
+{"kind":"line","line":"step 2/3 ...","stream":"stdout"}
+{"kind":"line","line":"warn: foo","stream":"stderr"}
+{"kind":"done","exit_code":0,"duration_ms":1842}
+```
+
+`kind` values:
+
+- `"line"` — one line of output (without trailing newline). `stream` is
+  `"stdout"` or `"stderr"`.
+- `"done"` — terminal event. `exit_code` + optional `error_code` +
+  `duration_ms`. Always the last NDJSON line.
+
+The client (`HttpTransport.run_streaming`) reads with
+`httpx.AsyncClient.stream(...)` + `aiter_lines()`. If the stream closes
+without a `done` event (network drop, agent crash mid-run), the client
+synthesizes a `done` with `error_code=HTTP_AGENT_ERROR`.
+
+Pre-stream HTTP status maps the same way as `/v1/shell`:
+401 → `HTTP_AUTH_FAILED`, 403 → `PERMISSION_DENIED`, 5xx → `HTTP_AGENT_ERROR`.
+
+The agent's deny-list still runs server-side as defense-in-depth.
+`format c:` produces a 200 response whose only NDJSON line is
+`{"kind":"done","error_code":"PERMISSION_DENIED"}` — the stream stays
+well-formed, just gets a single terminal event.
 
 Status codes used by `HttpTransport`:
 

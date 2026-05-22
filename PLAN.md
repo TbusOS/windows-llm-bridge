@@ -21,7 +21,8 @@
 | **M2.4**  | HTTP transport + Windows-side wlb-agent micro-service     | shipped    |
 | **M2**    | File transfer + named-tool runner + streaming output + HTTP transport | shipped |
 | **M3.1**  | Streaming — StreamEvent + run_streaming (local + ssh) + tool stream CLI | shipped |
-| **M3**    | Web UI + interactive PTY + skill packs + HTTP streaming  | in progress |
+| **M3.2**  | HTTP transport streaming — agent NDJSON endpoint + httpx aiter_lines    | shipped |
+| **M3**    | Web UI + interactive PTY + skill packs + MCP progress    | in progress |
 
 ---
 

@@ -29,14 +29,16 @@ TLS:
 
 from __future__ import annotations
 
+import json
 import os
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from wlb.transport.base import Interpreter, ShellResult, Transport
+from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
 
 
 def _read_token(token_file: str | None) -> str | None:
@@ -60,7 +62,7 @@ def _read_token(token_file: str | None) -> str | None:
 class HttpTransport(Transport):
     name = "http"
     supports_files = True
-    supports_streaming = False   # progress streaming → M3
+    supports_streaming = True    # real NDJSON streaming via /v1/shell/stream (M3.2)
 
     def __init__(
         self,
@@ -109,6 +111,146 @@ class HttpTransport(Transport):
             return self._fail("HTTP_AGENT_ERROR", str(e), started)
 
         return self._parse_shell_response(resp, started)
+
+    async def run_streaming(
+        self,
+        cmd: str,
+        *,
+        interpreter: Interpreter = "cmd",
+        timeout: int = 30,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream NDJSON-encoded StreamEvent objects from the agent.
+
+        Calls ``POST /v1/shell/stream`` on the wlb-agent (M3.2 endpoint),
+        which returns ``application/x-ndjson`` — one JSON object per line,
+        each matching the wlb StreamEvent shape. The terminal ``done`` is
+        synthesized client-side if the agent closes the stream early
+        (network drop, agent crash).
+        """
+        cfg_err = self._validate_config()
+        if cfg_err is not None:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code=cfg_err.error_code,
+                duration_ms=0,
+            )
+            return
+
+        started = time.monotonic()
+        saw_done = False
+        try:
+            async with self._client() as client:
+                async with client.stream(
+                    "POST",
+                    "/v1/shell/stream",
+                    json={"cmd": cmd, "interpreter": interpreter, "timeout": timeout},
+                    timeout=httpx.Timeout(self.connect_timeout, read=timeout + 30),
+                ) as response:
+                    if response.status_code == 401:
+                        yield StreamEvent(
+                            kind="done", exit_code=-1,
+                            error_code="HTTP_AUTH_FAILED",
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+                        return
+                    if response.status_code == 403:
+                        yield StreamEvent(
+                            kind="done", exit_code=-1,
+                            error_code="PERMISSION_DENIED",
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+                        return
+                    if response.status_code >= 500:
+                        yield StreamEvent(
+                            kind="done", exit_code=-1,
+                            error_code="HTTP_AGENT_ERROR",
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+                        return
+                    if response.status_code >= 400:
+                        yield StreamEvent(
+                            kind="done", exit_code=-1,
+                            error_code="HTTP_AGENT_ERROR",
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+                        return
+
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except (ValueError, TypeError):
+                            # Garbled NDJSON — emit BAD_RESPONSE and stop reading.
+                            yield StreamEvent(
+                                kind="done", exit_code=-1,
+                                error_code="HTTP_BAD_RESPONSE",
+                                duration_ms=int((time.monotonic() - started) * 1000),
+                            )
+                            saw_done = True
+                            return
+                        if not isinstance(data, dict):
+                            continue
+                        kind = data.get("kind", "line")
+                        ev = StreamEvent(
+                            kind=kind,
+                            line=data.get("line"),
+                            stream=data.get("stream"),
+                            percent=data.get("percent"),
+                            pattern_label=data.get("pattern_label"),
+                            match=data.get("match"),
+                            exit_code=int(data.get("exit_code", 0) or 0),
+                            error_code=data.get("error_code"),
+                            duration_ms=int(
+                                data.get(
+                                    "duration_ms",
+                                    int((time.monotonic() - started) * 1000),
+                                )
+                                or 0
+                            ),
+                        )
+                        yield ev
+                        if kind == "done":
+                            saw_done = True
+                            return
+        except httpx.ConnectError as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code="HTTP_HOST_UNREACHABLE",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+        except httpx.ConnectTimeout as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code="TIMEOUT_CONNECT",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+        except httpx.ReadTimeout as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code="TIMEOUT_SHELL",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+        except httpx.HTTPError as e:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code="HTTP_AGENT_ERROR",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            return
+
+        # Stream ended without a terminal done — synthesize one so callers
+        # always see a final event.
+        if not saw_done:
+            yield StreamEvent(
+                kind="done", exit_code=-1,
+                error_code="HTTP_AGENT_ERROR",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
 
     async def push(self, local: Path, remote: str) -> ShellResult:
         cfg_err = self._validate_config()

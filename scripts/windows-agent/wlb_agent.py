@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import json
 import os
 import re
 import secrets
@@ -43,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +206,108 @@ def run_command(cmd: str, interpreter: str, timeout: int) -> dict[str, Any]:
     }
 
 
+# ─── Streaming runner (M3.2) ─────────────────────────────────────
+
+
+def _ndjson(payload: dict) -> bytes:
+    """Encode one NDJSON record + trailing newline (utf-8 bytes)."""
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+async def stream_command(cmd: str, interpreter: str, timeout: int) -> AsyncIterator[bytes]:
+    """Yield NDJSON-encoded StreamEvent objects, one per chunk.
+
+    Same queue-merge pattern as :class:`wlb.transport.local.LocalTransport.run_streaming`,
+    rewritten here so the agent stays single-file deployable.
+    """
+    started = time.monotonic()
+    try:
+        argv = _build_argv(cmd, interpreter)
+    except FileNotFoundError:
+        yield _ndjson({
+            "kind": "done", "exit_code": -1,
+            "error_code": "POWERSHELL_NOT_AVAILABLE",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        return
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        yield _ndjson({
+            "kind": "done", "exit_code": -1,
+            "error_code": "SYSTEM_DEPENDENCY_MISSING",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+    EOF = object()
+
+    async def pipe(reader: asyncio.StreamReader | None, label: str) -> None:
+        if reader is None:
+            await queue.put((EOF, label))
+            return
+        try:
+            while True:
+                raw = await reader.readline()
+                if not raw:
+                    break
+                text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                await queue.put((text, label))
+        finally:
+            await queue.put((EOF, label))
+
+    out_task = asyncio.create_task(pipe(proc.stdout, "stdout"))
+    err_task = asyncio.create_task(pipe(proc.stderr, "stderr"))
+
+    eofs = 0
+    deadline = started + max(1, int(timeout))
+    timed_out = False
+    try:
+        while eofs < 2:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                timed_out = True
+                break
+            try:
+                item, label = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                proc.kill()
+                timed_out = True
+                break
+            if item is EOF:
+                eofs += 1
+                continue
+            yield _ndjson({"kind": "line", "line": item, "stream": label})
+    finally:
+        out_task.cancel()
+        err_task.cancel()
+
+    if timed_out:
+        await proc.wait()
+        yield _ndjson({
+            "kind": "done", "exit_code": -1,
+            "error_code": "TIMEOUT_SHELL",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        })
+        return
+
+    await proc.wait()
+    exit_code = proc.returncode or 0
+    yield _ndjson({
+        "kind": "done",
+        "exit_code": exit_code,
+        "error_code": None if exit_code == 0 else "SHELL_NONZERO_EXIT",
+        "duration_ms": int((time.monotonic() - started) * 1000),
+    })
+
+
 # ─── FastAPI app ─────────────────────────────────────────────────
 
 
@@ -271,6 +375,44 @@ def build_app(token: str) -> FastAPI:
 
         result = await asyncio.to_thread(run_command, cmd, interp, timeout)
         return JSONResponse(content=result)
+
+    @app.post("/v1/shell/stream")
+    async def shell_stream(request: Request, payload: dict[str, Any] = Body(...)) -> StreamingResponse:
+        """Streaming variant of /v1/shell — yields NDJSON (one event per line).
+
+        Each line is a UTF-8 JSON object matching the wlb StreamEvent shape:
+          {"kind":"line","line":"...","stream":"stdout"|"stderr"}
+          {"kind":"done","exit_code":N,"error_code":...,"duration_ms":N}
+        Terminal event is always ``kind=done`` (even on timeout / deny / spawn fail).
+        The deny-list runs locally as defense in depth: if the client snuck
+        ``format c:`` past its own check, the agent still refuses by sending
+        one done(PERMISSION_DENIED) and closing the stream.
+        """
+        _auth(request)
+        cmd = payload.get("cmd")
+        interp = payload.get("interpreter", "cmd")
+        timeout = int(payload.get("timeout", 30))
+        if not isinstance(cmd, str) or not cmd.strip():
+            raise HTTPException(status_code=400, detail="missing cmd")
+        if interp not in ("cmd", "powershell", "raw"):
+            raise HTTPException(status_code=400, detail=f"bad interpreter: {interp}")
+
+        bad, reason = check_dangerous(cmd)
+        if bad:
+            async def deny() -> AsyncIterator[bytes]:
+                yield _ndjson({
+                    "kind": "done", "exit_code": -1,
+                    "error_code": "PERMISSION_DENIED",
+                    "stderr": f"deny-list: {reason}",
+                    "duration_ms": 0,
+                })
+
+            return StreamingResponse(deny(), media_type="application/x-ndjson")
+
+        return StreamingResponse(
+            stream_command(cmd, interp, timeout),
+            media_type="application/x-ndjson",
+        )
 
     @app.post("/v1/file/push")
     async def file_push(request: Request, path: str = Query(...)) -> JSONResponse:

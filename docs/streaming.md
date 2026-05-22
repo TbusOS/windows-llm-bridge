@@ -84,7 +84,7 @@ errors (timeout / connection lost / permission denied) — those produce a
 |--------------------|-------------------------------------------------|------------------------------------------------------|
 | `LocalTransport`   | Real: subprocess pipes + queue merge            | M3.1                                                 |
 | `SshTransport`     | Real: `asyncssh.create_process` line readers    | M3.1; PowerShell uses `-EncodedCommand` same as `shell()` |
-| `HttpTransport`    | Fallback: `shell()` + post-hoc replay           | M3.2 will add a `/v1/shell/stream` agent endpoint    |
+| `HttpTransport`    | Real: NDJSON over `POST /v1/shell/stream`       | M3.2 — one JSON object per line; client synthesizes terminal `done` if the stream closes early |
 | `HybridTransport`  | Inherits whichever transport it routes to       | n/a — still planned                                  |
 
 `Transport.supports_streaming` reports whether the transport has real
@@ -117,6 +117,7 @@ Log path follows the same convention as non-streaming:
 - **No MCP support.** MCP tools are still synchronous — `wlb_tool_run`
   remains capture-then-return. MCP's `notifications/progress` extension
   is reserved for a future milestone once client support is widespread.
-- **HTTP transport falls back.** Until the wlb-agent gains a streaming
-  endpoint (M3.2), `HttpTransport.run_streaming` replays captured output
-  rather than streaming live.
+- **HTTP wire is NDJSON, not SSE.** Simpler to parse with stock httpx
+  + tooling. Each line is one JSON object matching the wlb StreamEvent
+  shape. SSE would have been an alternative; NDJSON wins on
+  cross-language client simplicity.

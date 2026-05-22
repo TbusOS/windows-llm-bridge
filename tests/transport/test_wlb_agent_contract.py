@@ -143,3 +143,52 @@ async def test_pull_missing_file_404(transport: HttpTransport, tmp_path: Path) -
     r = await transport.pull("/no/such/file", tmp_path / "out.bin")
     assert not r.ok
     assert r.error_code == "FILE_NOT_FOUND"
+
+
+# ─── contract: streaming (M3.2) ──────────────────────────────────
+
+
+async def test_stream_round_trip_emits_lines_in_order(transport: HttpTransport) -> None:
+    """Push a multi-line command through the agent's /v1/shell/stream, verify each line arrives."""
+    events = []
+    async for ev in transport.run_streaming(
+        "printf '1\\n2\\n3\\n'", interpreter="raw", timeout=10,
+    ):
+        events.append(ev)
+
+    out_lines = [e.line for e in events if e.kind == "line" and e.stream == "stdout"]
+    assert out_lines == ["1", "2", "3"]
+    assert events[-1].kind == "done"
+    assert events[-1].exit_code == 0
+
+
+async def test_stream_stderr_interleaved(transport: HttpTransport) -> None:
+    events = []
+    async for ev in transport.run_streaming(
+        "printf 'out\\n'; printf 'err\\n' >&2", interpreter="raw", timeout=10,
+    ):
+        events.append(ev)
+    out = {e.line for e in events if e.kind == "line" and e.stream == "stdout"}
+    err = {e.line for e in events if e.kind == "line" and e.stream == "stderr"}
+    assert "out" in out
+    assert "err" in err
+
+
+async def test_stream_deny_list_blocks_with_permission_denied(transport: HttpTransport) -> None:
+    """Agent's own deny-list returns one done(PERMISSION_DENIED) and closes stream."""
+    events = []
+    async for ev in transport.run_streaming("format c:", interpreter="cmd"):
+        events.append(ev)
+    assert len(events) == 1
+    assert events[0].kind == "done"
+    assert events[0].error_code == "PERMISSION_DENIED"
+
+
+async def test_stream_nonzero_exit_propagates(transport: HttpTransport) -> None:
+    events = []
+    async for ev in transport.run_streaming("false", interpreter="raw"):
+        events.append(ev)
+    done = events[-1]
+    assert done.kind == "done"
+    assert done.exit_code != 0
+    assert done.error_code == "SHELL_NONZERO_EXIT"
