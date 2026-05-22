@@ -125,6 +125,16 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="Run user-declared Windows tools by name with progress/"
                     "success/failure regex parsing and full log capture.",
     ),
+    CapabilitySpec(
+        name="web",
+        impl_path="wlb.api.server",
+        cli_command="wlb web / wlb-api",
+        mcp_tools=[],
+        supported_transports=["ssh", "local", "http"],
+        status="beta",
+        description="Local dashboard (FastAPI + WebSocket) over the active "
+                    "transport. Localhost-only by default, no auth in M3.3.",
+    ),
 ]
 
 

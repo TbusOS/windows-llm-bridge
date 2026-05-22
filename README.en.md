@@ -84,6 +84,7 @@ A side-by-side:
 | powershell | `wlb powershell <args>`   | `wlb_powershell`               | beta     | Auto-detect PS 5 vs 7+, structured output         |
 | filesync   | `wlb fs push|pull` / `maps` | `wlb_push` / `wlb_pull`      | beta     | SFTP push/pull + SMB path translation + local-copy shortcut (skips SFTP when the mount is reachable) |
 | tool       | `wlb tool list / show / run [--stream]` | `wlb_tool_list` / `wlb_tool_show` / `wlb_tool_run` | beta     | User-declared tools in TOML (command_template + progress/success/failure regex + workdir); `--stream` for live line/progress/match events (M3.1); args reject shell metachars; full output captured to workspace/hosts/.../tools/.../<ts>.log |
+| web        | `wlb web` / `wlb-api`     | —                              | beta     | Local dashboard (FastAPI + WebSocket) — status / registry / tool runner with live streaming. Localhost-only default; **no auth in M3.3** — front with an authenticated reverse proxy if exposed |
 
 ---
 

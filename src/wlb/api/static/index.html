@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wlb — Windows LLM Bridge</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>wlb</h1>
+    <span class="tagline">Windows LLM Bridge</span>
+    <span class="meta" id="meta-version">…</span>
+    <span class="meta" id="meta-profile">…</span>
+  </header>
+
+  <main>
+    <section id="status-section">
+      <h2>Status</h2>
+      <div id="status-card" class="card loading">loading…</div>
+    </section>
+
+    <section id="profile-section">
+      <h2>Active profile</h2>
+      <div id="profile-card" class="card loading">loading…</div>
+    </section>
+
+    <section id="describe-section">
+      <h2>Registry</h2>
+      <h3>Transports</h3>
+      <table id="transports-table" class="dense"><thead><tr><th>name</th><th>status</th><th>description</th></tr></thead><tbody></tbody></table>
+      <h3>Capabilities</h3>
+      <table id="capabilities-table" class="dense"><thead><tr><th>name</th><th>status</th><th>transports</th><th>description</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="tools-section">
+      <h2>Declared tools</h2>
+      <div class="tools-help">From <code id="tools-file">workspace/wlb-tools.toml</code>. Click <strong>Run</strong> to invoke; output streams live.</div>
+      <table id="tools-table" class="dense"><thead><tr><th>name</th><th>interpreter</th><th>args</th><th>timeout</th><th>description</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="tools-warnings"></div>
+    </section>
+  </main>
+
+  <!-- Tool-run modal + streaming output -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-inner">
+      <div class="modal-header">
+        <h2 id="modal-title">Run …</h2>
+        <button id="modal-close" class="ghost" aria-label="close">×</button>
+      </div>
+      <form id="args-form"></form>
+      <div class="modal-actions">
+        <button id="modal-run" type="button">Run</button>
+        <button id="modal-cancel" type="button" class="ghost">Cancel</button>
+      </div>
+      <div id="run-output-pane" class="hidden">
+        <div class="output-toolbar">
+          <span id="run-status">connecting…</span>
+          <span id="run-progress-wrap" class="hidden">
+            <progress id="run-progress" max="100" value="0"></progress>
+            <span id="run-progress-label">0%</span>
+          </span>
+        </div>
+        <pre id="run-output" class="output"></pre>
+        <div id="run-summary" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span>wlb-api · localhost-only by default · no auth in M3.3</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

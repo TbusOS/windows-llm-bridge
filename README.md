@@ -75,6 +75,7 @@ Agent 的反馈闭环就断了。wlb 用结构化的工具桥把 Windows 接回 
 | powershell | `wlb powershell <args>`   | `wlb_powershell`               | beta     | PowerShell 5 / 7+ 自动探测，结构化返回           |
 | filesync   | `wlb fs push|pull` / `maps` | `wlb_push` / `wlb_pull`      | beta     | SFTP push/pull + SMB 路径翻译 + 本地拷贝 shortcut（mount 可达时跳 SFTP） |
 | tool       | `wlb tool list / show / run [--stream]` | `wlb_tool_list` / `wlb_tool_show` / `wlb_tool_run` | beta     | 用户 TOML 声明工具（command_template + 进度/成功/失败 regex + workdir）；`--stream` 实时输出 + 进度匹配（M3.1）；arg 值禁 shell meta；全输出落到 workspace/hosts/.../tools/.../<ts>.log |
+| web        | `wlb web` / `wlb-api`     | —                              | beta     | 本地仪表板（FastAPI + WebSocket），dashboard + 实时工具运行；默认 127.0.0.1，**M3.3 无 auth**（要外网暴露请加反代+auth） |
 
 ---
 
