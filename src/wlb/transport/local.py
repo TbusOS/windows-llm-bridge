@@ -129,7 +129,11 @@ class LocalTransport(Transport):
     name = "local"
     supports_files = True       # local cp via shutil — used by tests
     supports_streaming = True   # real line-by-line subprocess streaming (M3.1)
-    supports_pty = sys.platform != "win32"   # PTY support requires Unix pty.openpty()
+    # Unix uses pty.openpty(); Windows dispatches to wlb.transport._windows_pty
+    # which lazy-imports pywinpty (optional `windows-local-pty` extra). The
+    # actual runtime success on Windows depends on pywinpty being installed —
+    # this flag reports API availability, not "will work today".
+    supports_pty = True
 
     def __init__(self, *, on_windows: bool | None = None) -> None:
         # Allow tests to force the "we're on Windows" code path.
@@ -306,15 +310,26 @@ class LocalTransport(Transport):
     ) -> PtySession:
         """Open a local PTY-backed shell.
 
-        Unix-only — uses :func:`pty.openpty`. On Windows this raises
-        ``NotImplementedError`` because ConPTY support is not wired yet
-        (M3.4.1). When in doubt check ``LocalTransport.supports_pty``.
+        Two backends:
+
+        - Unix → :func:`pty.openpty` + child stdio on the slave fd. Always
+          available on Linux / macOS controllers (M3.4).
+        - Windows → :mod:`wlb.transport._windows_pty` which lazy-imports
+          pywinpty (M3.5; ConPTY on Windows 10 1809+, winpty fallback on
+          older). The extra ``windows-local-pty`` must be installed —
+          ``uv sync --extra windows-local-pty`` — otherwise raises
+          :class:`NotImplementedError` with the install hint.
         """
         if sys.platform == "win32":
-            raise NotImplementedError(
-                "LocalTransport PTY needs ConPTY on Windows (M3.4.1). "
-                "Use the SSH transport against a remote Windows host instead."
+            from wlb.transport._windows_pty import open_windows_pty
+
+            return await open_windows_pty(
+                interpreter=interpreter,
+                cols=cols,
+                rows=rows,
+                term_type=term_type,
             )
+
         import pty
 
         # cmd / powershell on a Unix LocalTransport always falls back to

@@ -23,7 +23,9 @@
 | **M3.1**  | Streaming — StreamEvent + run_streaming (local + ssh) + tool stream CLI | shipped |
 | **M3.2**  | HTTP transport streaming — agent NDJSON endpoint + httpx aiter_lines    | shipped |
 | **M3.3**  | Web UI — FastAPI dashboard + WebSocket tool-run streaming               | shipped |
-| **M3**    | Interactive PTY + skill packs + MCP progress notifications              | in progress |
+| **M3.4**  | Interactive PTY — base ABC + Local (Unix) + SSH + xterm.js page         | shipped |
+| **M3.5**  | Windows-local PTY (ConPTY) — pywinpty dispatch + dispatch tests         | shipped |
+| **M3**    | HTTP PTY + skill packs + MCP progress notifications + PTY recording    | in progress |
 
 ---
 

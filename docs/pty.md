@@ -142,13 +142,73 @@ PTY inherits the dashboard's M3.3 security caveats:
 
 ---
 
+## Windows-local PTY (M3.5)
+
+If you run `wlb` *on* Windows (not as a Linux/macOS controller talking
+to a remote Windows host), `LocalTransport.open_pty` can spawn a local
+ConPTY-backed `cmd.exe` or `pwsh.exe` for the dashboard's `/pty.html`
+page.
+
+Implementation: pywinpty — same library the jupyter ecosystem uses.
+pywinpty picks ConPTY automatically on Windows 10 1809+ and falls back
+to the bundled winpty shim on older systems.
+
+### Install on a Windows controller
+
+```powershell
+# From the wlb repo root in an admin PowerShell:
+uv sync --extra windows-local-pty
+```
+
+That pulls in `pywinpty>=2.0`. Without the extra, `LocalTransport.open_pty`
+raises `NotImplementedError` with a hint pointing at this section.
+
+### When you DON'T need this
+
+Most users run `wlb` from a Linux/macOS controller, configure
+`WLB_SSH_HOST` to point at a Windows OpenSSH Server, and use the
+**SSH PTY** (`SshTransport.open_pty`) which is part of the core deps.
+ConPTY only matters when you want a `LocalTransport` PTY — i.e. when
+the wlb process *is* the Windows host.
+
+### Backend layout
+
+```
+wlb.transport.local.LocalTransport.open_pty
+  └─ sys.platform == "win32" ?
+      ├─ yes →  wlb.transport._windows_pty.open_windows_pty
+      │           ├─ pywinpty.PtyProcess.spawn(argv, dimensions=(rows,cols))
+      │           └─ WindowsPtySession wraps the proc
+      └─ no  →  pty.openpty() + asyncio.create_subprocess_exec
+                LocalPtySession wraps the master fd
+```
+
+The two paths produce different concrete `PtySession` subclasses with
+the same async surface (`read` / `write` / `resize` / `wait` / `close`),
+so callers (`/ws/pty` pump, tests) don't care which fired.
+
+### Testing on Linux CI
+
+`tests/transport/test_windows_pty_dispatch.py` monkeypatches
+`sys.platform` to `"win32"` and injects a synthetic `winpty` module to
+exercise the Windows branch end-to-end on Linux:
+
+- `argv` selection per interpreter (cmd / raw → `cmd.exe`; powershell
+  → `pwsh.exe` if on PATH else `powershell.exe`).
+- `PtyProcess.spawn` invoked with `dimensions=(rows, cols)` — Windows
+  order, not the Unix `(cols, rows)`.
+- `WindowsPtySession`'s `read` normalizes pywinpty's mixed str/bytes
+  return; `write` passes bytes through; `resize` calls `setwinsize(rows, cols)`.
+
+Real ConPTY end-to-end runs only on Windows — documented as part of the
+Windows walkthrough rather than a CI assertion.
+
+---
+
 ## What's next
 
-- **Windows-local ConPTY** (M3.4.1): swap `pty.openpty` for the
-  Windows ConPTY API when `sys.platform == "win32"`. Lets a contributor
-  test the UI on a Windows laptop without an SSH target.
-- **HTTP transport PTY** (M3.5): add a `WS /v1/pty` to the wlb-agent
-  and an `HttpPtySession` on the controller. NDJSON won't fit (bidirectional
-  binary), so this is a WebSocket-only contract.
-- **Recording / replay** (M3.6): asciinema-style cast files saved under
+- **HTTP transport PTY** (M3.6): add a `WS /v1/pty` to the wlb-agent
+  and an `HttpPtySession` on the controller. NDJSON won't fit
+  (bidirectional binary), so this is a WebSocket-only contract.
+- **Recording / replay** (M3.7): asciinema-style cast files saved under
   `workspace/hosts/<host>/pty/<ts>.cast`.
