@@ -49,7 +49,13 @@ import asyncssh
 from collections.abc import AsyncIterator
 
 from wlb.transport import ssh_pool
-from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
+from wlb.transport.base import (
+    Interpreter,
+    PtySession,
+    ShellResult,
+    StreamEvent,
+    Transport,
+)
 
 _PWSH_PRIMARY = "pwsh.exe"
 _PWSH_FALLBACK = "powershell.exe"
@@ -127,10 +133,81 @@ def _proc_to_result(proc: asyncssh.SSHCompletedProcess, started_at: float) -> Sh
     )
 
 
+class SshPtySession(PtySession):
+    """asyncssh PTY-backed shell.
+
+    Holds an :class:`asyncssh.SSHClientProcess` opened with ``term_type`` /
+    ``term_size`` plus the pool key so we can mark the connection dead on
+    :class:`asyncssh.ConnectionLost`. The session is one channel on the
+    pooled connection — other shell / SFTP channels can still run
+    concurrently.
+    """
+
+    def __init__(self, proc: Any, pool_key: tuple) -> None:
+        self._proc = proc
+        self._pool_key = pool_key
+        self._closed = False
+
+    async def read(self, n: int = 4096) -> bytes:
+        if self._closed:
+            return b""
+        try:
+            data = await self._proc.stdout.read(n)
+        except asyncssh.ConnectionLost:
+            ssh_pool.mark_dead(self._pool_key)
+            return b""
+        except (asyncssh.Error, OSError):
+            return b""
+        if data is None:
+            return b""
+        return data if isinstance(data, bytes) else data.encode("utf-8", "replace")
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or not data:
+            return
+        try:
+            self._proc.stdin.write(data)
+            await self._proc.stdin.drain()
+        except asyncssh.ConnectionLost:
+            ssh_pool.mark_dead(self._pool_key)
+        except (asyncssh.Error, OSError):
+            pass
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._closed:
+            return
+        try:
+            self._proc.change_terminal_size(cols, rows)
+        except (asyncssh.Error, AttributeError):
+            pass
+
+    async def wait(self) -> int:
+        try:
+            await self._proc.wait()
+        except Exception:                      # noqa: BLE001
+            pass
+        status = getattr(self._proc, "exit_status", None)
+        return status if status is not None else -1
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._proc.terminate()
+        except Exception:                      # noqa: BLE001
+            pass
+        try:
+            await asyncio.wait_for(self._proc.wait_closed(), timeout=2)
+        except Exception:                      # noqa: BLE001
+            pass
+
+
 class SshTransport(Transport):
     name = "ssh"
     supports_files = True       # SFTP capability shipped M2.1
     supports_streaming = True   # real line-by-line streaming shipped M3.1
+    supports_pty = True         # asyncssh create_process with term_type (M3.4)
 
     def __init__(
         self,
@@ -308,6 +385,60 @@ class SshTransport(Transport):
             error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+    async def open_pty(
+        self,
+        *,
+        interpreter: Interpreter = "cmd",
+        cols: int = 80,
+        rows: int = 24,
+        term_type: str = "xterm-256color",
+    ) -> PtySession:
+        """Open a PTY-backed shell on the Windows host over SSH.
+
+        Uses :meth:`asyncssh.SSHClientConnection.create_process` with
+        ``term_type`` + ``term_size`` to request a PTY. ``interpreter``
+        picks what runs inside: ``cmd`` / ``raw`` → sshd's default shell
+        (cmd.exe on Windows OpenSSH); ``powershell`` → explicit pwsh/
+        powershell.exe so the user gets a proper PowerShell prompt.
+
+        Connection lifetime: the new PTY opens a fresh channel on the
+        pooled connection. ``close()`` only tears down that channel; the
+        connection stays in the pool for other shell / SFTP traffic.
+        """
+        cfg_err = self._validate_config()
+        if cfg_err is not None:
+            raise ConnectionError(cfg_err.stderr or "transport not configured")
+
+        conn, open_err = await self._acquire(time.monotonic())
+        if conn is None:
+            err = open_err.error_code if open_err else "SSH_HOST_UNREACHABLE"
+            raise ConnectionError(f"ssh connect failed: {err}")
+
+        key = self._pool_key()
+        # Pick the remote command to run inside the PTY. For cmd / raw,
+        # passing None lets sshd spawn the user's default shell (which
+        # on Windows OpenSSH is cmd.exe). For powershell, we explicitly
+        # invoke pwsh/powershell so the prompt is right.
+        if interpreter == "powershell":
+            command: Any = f"{_PWSH_PRIMARY} -NoProfile -NoLogo"
+        else:
+            command = None
+
+        try:
+            proc = await conn.create_process(
+                command,
+                term_type=term_type,
+                term_size=(cols, rows),
+                encoding=None,
+            )
+        except asyncssh.ConnectionLost as e:
+            ssh_pool.mark_dead(key)
+            raise ConnectionError(f"connection lost: {e}") from None
+        except asyncssh.Error as e:
+            raise ConnectionError(f"asyncssh: {e}") from None
+
+        return SshPtySession(proc=proc, pool_key=key)
 
     async def health(self) -> dict[str, Any]:
         out: dict[str, Any] = {

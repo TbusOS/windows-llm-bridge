@@ -76,6 +76,46 @@ class StreamEvent:
     duration_ms: int = 0
 
 
+class PtySession(ABC):
+    """Handle to an open PTY-backed shell session.
+
+    Yielded by :meth:`Transport.open_pty`. The wrapper concrete classes
+    (LocalPtySession, SshPtySession) attach their own fields; this ABC
+    defines only the contract used by the WebSocket pump in
+    :mod:`wlb.api.server`.
+
+    Lifecycle:
+        - ``read`` returns the next chunk of bytes coming OUT of the
+          shell (with terminal escapes). ``b""`` means EOF — the shell
+          has closed; the caller should stop reading and call ``wait``.
+        - ``write`` injects keystrokes / pasted bytes INTO the shell.
+        - ``resize`` updates the PTY's window size (the shell sees
+          SIGWINCH on Unix; PowerShell on ConPTY translates similarly).
+        - ``wait`` returns the exit status after the shell exits.
+        - ``close`` is idempotent; safe to call from a ``finally`` block.
+    """
+
+    @abstractmethod
+    async def read(self, n: int = 4096) -> bytes:
+        ...
+
+    @abstractmethod
+    async def write(self, data: bytes) -> None:
+        ...
+
+    @abstractmethod
+    async def resize(self, cols: int, rows: int) -> None:
+        ...
+
+    @abstractmethod
+    async def wait(self) -> int:
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        ...
+
+
 @dataclass(frozen=True)
 class TransferEvent:
     """One progress / completion event from a streaming file transfer.
@@ -112,7 +152,8 @@ class Transport(ABC):
 
     name: str = "base"
     supports_files: bool = False        # True for ssh / http / hybrid (M2+)
-    supports_streaming: bool = False    # True for ssh (M2+)
+    supports_streaming: bool = False    # True for ssh / local / http (M3.x)
+    supports_pty: bool = False          # True for ssh / local (M3.4)
 
     # ── Shell ─────────────────────────────────────────────────────
     @abstractmethod
@@ -131,6 +172,30 @@ class Transport(ABC):
         the implementation runs the command string verbatim (used by
         capabilities that have already built the full invocation).
         """
+
+    # ── PTY (M3.4) ────────────────────────────────────────────────
+    async def open_pty(
+        self,
+        *,
+        interpreter: Interpreter = "cmd",
+        cols: int = 80,
+        rows: int = 24,
+        term_type: str = "xterm-256color",
+    ) -> "PtySession":
+        """Open an interactive PTY session and return a handle.
+
+        The returned :class:`PtySession` exposes async ``read`` / ``write`` /
+        ``resize`` / ``wait`` / ``close``. Callers are responsible for
+        ``await session.close()`` when done (web sockets typically wrap in
+        a ``try`` / ``finally``).
+
+        Default raises :class:`NotImplementedError`. Concrete transports
+        implement this; the class-level ``supports_pty`` attribute reports
+        availability without having to call.
+        """
+        raise NotImplementedError(
+            f"{self.name} transport does not implement open_pty() yet"
+        )
 
     # ── Streaming shell (M3) ──────────────────────────────────────
     async def run_streaming(

@@ -14,14 +14,22 @@ catches the Linux-side fallback and skips Windows-specific assertions.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import struct
 import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
+from wlb.transport.base import (
+    Interpreter,
+    PtySession,
+    ShellResult,
+    StreamEvent,
+    Transport,
+)
 
 
 def _path_size(path: Path) -> int:
@@ -37,10 +45,91 @@ def _path_size(path: Path) -> int:
     return total
 
 
+class LocalPtySession(PtySession):
+    """PTY backed by ``pty.openpty()`` + a subprocess. Unix-only.
+
+    Reads / writes go through :func:`asyncio.to_thread` wrapping
+    ``os.read`` / ``os.write`` on the master fd. That's slightly less
+    efficient than a proper :class:`asyncio.StreamReader`, but it sidesteps
+    the lifecycle complexity of connecting a pipe to the event loop and
+    keeps the close-on-shutdown story simple (closing the master fd from
+    the main task makes the in-flight ``os.read`` thread fail with
+    ``OSError``, which we swallow).
+    """
+
+    def __init__(self, master_fd: int, proc: asyncio.subprocess.Process) -> None:
+        self._master_fd = master_fd
+        self._proc = proc
+        self._closed = False
+
+    async def read(self, n: int = 4096) -> bytes:
+        if self._closed:
+            return b""
+        try:
+            return await asyncio.to_thread(os.read, self._master_fd, n)
+        except OSError:
+            return b""
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or not data:
+            return
+        try:
+            await asyncio.to_thread(os.write, self._master_fd, data)
+        except OSError:
+            pass
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._closed:
+            return
+        try:
+            import fcntl
+            import termios
+
+            packed = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ, packed)
+        except (OSError, ModuleNotFoundError):
+            # ModuleNotFoundError on Windows where termios is absent.
+            pass
+
+    async def wait(self) -> int:
+        try:
+            await self._proc.wait()
+        except Exception:               # noqa: BLE001 — wait is best-effort post-close
+            pass
+        return self._proc.returncode if self._proc.returncode is not None else -1
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        # Closing the master fd kills any in-flight os.read with EBADF.
+        try:
+            os.close(self._master_fd)
+        except OSError:
+            pass
+        if self._proc.returncode is None:
+            try:
+                self._proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(self._proc.wait(), timeout=2)
+            except (asyncio.TimeoutError, Exception):           # noqa: BLE001
+                try:
+                    self._proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await self._proc.wait()
+                except Exception:                                # noqa: BLE001
+                    pass
+
+
 class LocalTransport(Transport):
     name = "local"
     supports_files = True       # local cp via shutil — used by tests
     supports_streaming = True   # real line-by-line subprocess streaming (M3.1)
+    supports_pty = sys.platform != "win32"   # PTY support requires Unix pty.openpty()
 
     def __init__(self, *, on_windows: bool | None = None) -> None:
         # Allow tests to force the "we're on Windows" code path.
@@ -206,6 +295,67 @@ class LocalTransport(Transport):
             error_code=None if exit_code == 0 else "SHELL_NONZERO_EXIT",
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+    async def open_pty(
+        self,
+        *,
+        interpreter: Interpreter = "cmd",
+        cols: int = 80,
+        rows: int = 24,
+        term_type: str = "xterm-256color",
+    ) -> PtySession:
+        """Open a local PTY-backed shell.
+
+        Unix-only — uses :func:`pty.openpty`. On Windows this raises
+        ``NotImplementedError`` because ConPTY support is not wired yet
+        (M3.4.1). When in doubt check ``LocalTransport.supports_pty``.
+        """
+        if sys.platform == "win32":
+            raise NotImplementedError(
+                "LocalTransport PTY needs ConPTY on Windows (M3.4.1). "
+                "Use the SSH transport against a remote Windows host instead."
+            )
+        import pty
+
+        # cmd / powershell on a Unix LocalTransport always falls back to
+        # the system shell — same convention as shell() and run_streaming.
+        argv0, prefix = self._resolve_executable(interpreter)
+        # For PTY we want an *interactive* shell, not -c, so the prompt
+        # and line editing actually fire. /bin/sh -i works without rc files.
+        if argv0 == "/bin/sh":
+            argv = ["/bin/sh", "-i"]
+        else:                                # Windows-native (would have raised above)
+            argv = [argv0, *prefix]
+
+        master_fd, slave_fd = pty.openpty()
+        try:
+            try:
+                import fcntl
+                import termios
+
+                packed = struct.pack("HHHH", rows, cols, 0, 0)
+                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, packed)
+            except (OSError, ModuleNotFoundError):
+                pass
+
+            env = dict(os.environ)
+            env["TERM"] = term_type
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=env,
+                start_new_session=True,
+            )
+        finally:
+            # Child owns slave_fd now; parent must close to get EOF on shell exit.
+            try:
+                os.close(slave_fd)
+            except OSError:
+                pass
+
+        return LocalPtySession(master_fd=master_fd, proc=proc)
 
     async def push(self, local: Path, remote: str) -> ShellResult:
         """Local push = shutil copy. ``remote`` is just another local path."""

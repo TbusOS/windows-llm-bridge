@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wlb — PTY</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!--
+    xterm.js loaded from jsDelivr. For air-gapped environments, vendor
+    the assets locally and adjust the URLs below — see docs/pty.md.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>wlb · pty</h1>
+    <span class="tagline">interactive terminal</span>
+    <span class="meta"><a href="/" class="link">← dashboard</a></span>
+  </header>
+
+  <main class="pty-main">
+    <div class="pty-controls">
+      <label for="interp-select">interpreter:</label>
+      <select id="interp-select">
+        <option value="cmd">cmd</option>
+        <option value="powershell">powershell</option>
+        <option value="raw">raw (sshd default shell)</option>
+      </select>
+      <button id="connect-btn">Connect</button>
+      <button id="disconnect-btn" class="ghost" disabled>Disconnect</button>
+      <span id="pty-status" class="pty-status">idle</span>
+    </div>
+
+    <div id="terminal" class="terminal-wrap"></div>
+  </main>
+
+  <footer>
+    <span>terminal renderer: xterm.js · ⚠ localhost-only and no auth in M3.3 — don't expose</span>
+  </footer>
+
+  <script src="/static/pty.js" defer></script>
+</body>
+</html>

@@ -135,6 +135,16 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="Local dashboard (FastAPI + WebSocket) over the active "
                     "transport. Localhost-only by default, no auth in M3.3.",
     ),
+    CapabilitySpec(
+        name="pty",
+        impl_path="wlb.api.server",
+        cli_command="(browser) /pty.html",
+        mcp_tools=[],
+        supported_transports=["ssh", "local"],
+        status="beta",
+        description="Interactive PTY in the browser (xterm.js + WebSocket). "
+                    "ssh: asyncssh PTY channel; local: Unix pty.openpty().",
+    ),
 ]
 
 

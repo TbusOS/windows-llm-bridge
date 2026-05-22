@@ -76,6 +76,13 @@ def create_app(profile_name: str | None = None) -> FastAPI:
             }
         )
 
+    @app.get("/pty.html", include_in_schema=False)
+    async def pty_page() -> Any:
+        pty_path = _STATIC_DIR / "pty.html"
+        if pty_path.exists():
+            return FileResponse(str(pty_path), media_type="text/html")
+        raise HTTPException(status_code=404, detail="pty.html not bundled")
+
     # ── meta ─────────────────────────────────────────────────────
     @app.get("/api/version")
     async def api_version() -> dict[str, Any]:
@@ -188,6 +195,128 @@ def create_app(profile_name: str | None = None) -> FastAPI:
             try:
                 await websocket.close()
             except Exception:                # noqa: BLE001 — close on already-closed is fine
+                pass
+
+    # ── interactive PTY (M3.4) ──────────────────────────────────
+    @app.websocket("/ws/pty")
+    async def ws_pty(websocket: WebSocket) -> None:
+        """Bidirectional PTY pump.
+
+        Wire protocol:
+            First client→server frame (TEXT, JSON):
+                {"interpreter": "cmd"|"powershell"|"raw",
+                 "cols": 80, "rows": 24}
+
+            After that:
+                client→server BINARY  = keystrokes / paste bytes
+                client→server TEXT    = control JSON:
+                    {"kind":"resize","cols":N,"rows":N}
+                    {"kind":"close"}
+                server→client BINARY  = raw PTY bytes (xterm escapes etc.)
+                server→client TEXT    = control JSON:
+                    {"kind":"exit","exit_code":N}
+                    {"kind":"error","error":"..."}
+
+            Either side may close the socket at any time; server cleans
+            up the PTY in a ``finally`` block.
+        """
+        import asyncio
+        await websocket.accept()
+
+        session = None
+        pump_to_ws_task = None
+        try:
+            # ── first frame: settings ──────────────────────────
+            try:
+                raw = await websocket.receive_text()
+                opts = json.loads(raw) or {}
+                interpreter = opts.get("interpreter", "cmd")
+                cols = int(opts.get("cols", 80))
+                rows = int(opts.get("rows", 24))
+            except (WebSocketDisconnect, ValueError, TypeError) as e:
+                await websocket.send_text(json.dumps({"kind": "error", "error": f"bad first frame: {e}"}))
+                return
+
+            if interpreter not in ("cmd", "powershell", "raw"):
+                await websocket.send_text(json.dumps(
+                    {"kind": "error", "error": f"bad interpreter: {interpreter}"}
+                ))
+                return
+
+            transport = build_transport(profile_name=profile_name)
+            if not getattr(transport, "supports_pty", False):
+                await websocket.send_text(json.dumps(
+                    {"kind": "error", "error": f"transport {transport.name!r} has no PTY support"}
+                ))
+                return
+
+            try:
+                session = await transport.open_pty(
+                    interpreter=interpreter, cols=cols, rows=rows,
+                )
+            except NotImplementedError as e:
+                await websocket.send_text(json.dumps({"kind": "error", "error": str(e)}))
+                return
+            except ConnectionError as e:
+                await websocket.send_text(json.dumps({"kind": "error", "error": str(e)}))
+                return
+
+            # ── pump bytes from PTY out to the WS ──────────────
+            async def pump_to_ws() -> None:
+                assert session is not None
+                while True:
+                    chunk = await session.read(4096)
+                    if not chunk:
+                        break
+                    try:
+                        await websocket.send_bytes(chunk)
+                    except (WebSocketDisconnect, RuntimeError):
+                        return
+                exit_code = await session.wait()
+                try:
+                    await websocket.send_text(json.dumps(
+                        {"kind": "exit", "exit_code": exit_code}
+                    ))
+                except Exception:                # noqa: BLE001
+                    pass
+
+            pump_to_ws_task = asyncio.create_task(pump_to_ws())
+
+            # ── pump WS frames into the PTY ────────────────────
+            while True:
+                try:
+                    message = await websocket.receive()
+                except WebSocketDisconnect:
+                    break
+                mtype = message.get("type")
+                if mtype == "websocket.disconnect":
+                    break
+                if "bytes" in message and message["bytes"] is not None:
+                    await session.write(message["bytes"])
+                elif "text" in message and message["text"] is not None:
+                    try:
+                        ctrl = json.loads(message["text"])
+                    except (ValueError, TypeError):
+                        continue
+                    kind = ctrl.get("kind")
+                    if kind == "resize":
+                        try:
+                            await session.resize(int(ctrl["cols"]), int(ctrl["rows"]))
+                        except (KeyError, ValueError, TypeError):
+                            pass
+                    elif kind == "close":
+                        break
+        finally:
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:                # noqa: BLE001
+                    pass
+            if pump_to_ws_task is not None and not pump_to_ws_task.done():
+                pump_to_ws_task.cancel()
+            try:
+                await websocket.close()
+            except Exception:                    # noqa: BLE001
                 pass
 
     return app
