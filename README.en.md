@@ -188,6 +188,7 @@ windows-llm-bridge/
 | [docs/quickstart.md](docs/quickstart.md)     | 8-step getting started             |
 | [docs/windows-side-setup.md](docs/windows-side-setup.md) | OpenSSH Server on Windows |
 | [docs/mcp-integration.md](docs/mcp-integration.md)       | MCP registration for Claude Code / Cursor |
+| [docs/walkthrough.md](docs/walkthrough.md)               | End-to-end real-Windows walkthrough (scripts + checklist in `walkthrough/`) |
 | [CLAUDE.md](CLAUDE.md)              | Rules for AI agents working on this repo  |
 
 ---

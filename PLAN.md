@@ -28,7 +28,8 @@
 | **M3.6**  | HTTP PTY — wlb-agent `WS /v1/pty` + `HttpPtySession`                    | shipped |
 | **M3.7**  | PTY recording — asciinema v2 `.cast` writer at PtySession boundary      | shipped |
 | **M3.8**  | Replay UI — `/casts.html` + asciinema-player v3 + list/serve endpoints  | shipped |
-| **M3**    | Skill packs + MCP progress notifications + real Windows walkthrough     | in progress |
+| **M3.9**  | Real-Windows walkthrough — scripts + checklist shipped (machine run TBD)| substrate shipped |
+| **M3**    | Skill packs + MCP progress notifications                                | in progress |
 
 ---
 
@@ -399,6 +400,51 @@ sandboxed API endpoints to list + serve recordings.
 **Done when:** With `WLB_PTY_RECORD=1`, opening `/pty.html` and running
 a session produces a `.cast` file that shows up in `/casts.html` and
 plays back in the browser.
+
+---
+
+## M3.9 — Real-Windows walkthrough (substrate shipped)
+
+Adds the scripts, checklists, and docs needed to validate every M3.x
+shipping feature against a real Windows host. The actual machine run
+is a one-off per Windows version and lives in the operator's local
+notes — not the repo.
+
+- [x] `walkthrough/` directory added:
+  - [x] `README.md` — top-level overview, security/sanitization rules.
+  - [x] `local-notes.env.example` — template for the operator's real
+        target details (`WIN_HOST`, `WIN_USER`, `WLB_KEY`,
+        `WLB_PROFILE`, `WIN_AGENT_PORT`, `WLB_HTTP_TOKEN_FILE`,
+        `WLB_HTTP_CA_BUNDLE`, `WIN_STAGE_DIR`).
+  - [x] `01-windows-bootstrap.ps1` — single PowerShell admin script:
+        Phase 1 OpenSSH (delegates to existing `enable-openssh.ps1`),
+        Phase 2 Python 3.11+ probe, Phase 3 fastapi+uvicorn install,
+        Phase 4 pywinpty (optional), Phase 5 wlb-agent stage
+        (delegates to existing `install-agent.ps1`), Phase 6 summary
+        with detected IPv4 + next-steps printout. Idempotent.
+  - [x] `02-linux-pair.sh` — source local-notes.env, ed25519 keygen,
+        print pubkey + Windows install one-liner, wait for `y`, write
+        `workspace/profiles/<WLB_PROFILE>.toml` atomically (mode 600),
+        smoke `wlb status`.
+  - [x] `03-smoke-tests.sh` — 5 scripted SSH cases: status, cmd echo,
+        powershell echo, fs push/pull with sha256 round-trip,
+        ephemeral wlb-tools.toml + tool run round-trip. Tees output
+        to `walkthrough/local-smoke-<ts>.log` (gitignored). Exit
+        reflects pass/fail count.
+  - [x] `04-smoke-checklist.md` — manual checklist for the things not
+        scriptable from CLI: dashboard A1-A5, SSH PTY B1-B7,
+        HTTP transport + HTTP PTY C1-C5, recording D1-D3, replay UI
+        E1-E5, optional local ConPTY F1-F4. Result-recording template.
+- [x] `.gitignore` — `walkthrough/local-*` (with `!walkthrough/local-*.example`
+      so templates stay tracked).
+- [x] `docs/walkthrough.md` — public-facing doc: why it exists, five
+      phases, security/sanitization rules, pass criteria, milestone
+      relationship.
+
+**Done when:** Operators can run the three scripts on a fresh
+Windows host and reach `5/5 passed` on `03-smoke-tests.sh`. Actual
+execution and result recording are local to each operator — the
+substrate proves we've shipped enough to make that one-off cheap.
 
 ---
 

@@ -174,6 +174,7 @@ windows-llm-bridge/
 | [docs/quickstart.md](docs/quickstart.md)     | 8 步入门                          |
 | [docs/windows-side-setup.md](docs/windows-side-setup.md) | Windows 端配 OpenSSH Server |
 | [docs/mcp-integration.md](docs/mcp-integration.md)       | MCP 注册到 Claude Code / Cursor |
+| [docs/walkthrough.md](docs/walkthrough.md)               | 真 Windows 端到端 walkthrough（脚本 + checklist 在 `walkthrough/`） |
 | [CLAUDE.md](CLAUDE.md)              | AI agent 工作规则                        |
 
 ---

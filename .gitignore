@@ -139,3 +139,11 @@ docs/reference/
 # 杂项日志输出
 logs/
 *.jsonl
+
+# ─────────────────────────────────────────────
+# Walkthrough — real-machine state stays local
+# ─────────────────────────────────────────────
+# Anything matching walkthrough/local-* is private (real IPs, tokens,
+# run logs). The matching *.example templates ARE tracked.
+walkthrough/local-*
+!walkthrough/local-*.example
