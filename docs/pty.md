@@ -1,4 +1,4 @@
-# Interactive PTY (M3.4 → M3.7)
+# Interactive PTY (M3.4 → M3.8)
 
 A browser-based interactive terminal for wlb. Opens an xterm.js terminal,
 pipes keystrokes over a WebSocket to the active transport's PTY, streams
@@ -367,10 +367,64 @@ combine that with a session where you'd type a password.
 
 ---
 
+## Replay UI (M3.8)
+
+The dashboard ships a `/casts.html` page that lists every `.cast` file
+in your workspace and plays the selected one inline with
+[asciinema-player v3](https://docs.asciinema.org/manual/player/). The
+sidebar shows newest-first per host; the player on the right loads on
+click.
+
+### Endpoints
+
+| Method | Path                                | Purpose                                                        |
+|--------|-------------------------------------|----------------------------------------------------------------|
+| GET    | `/casts.html`                       | The page itself (vanilla JS, no build step)                    |
+| GET    | `/api/casts`                        | List recordings (JSON): host / filename / size / mtime         |
+| GET    | `/api/casts/{host}/{filename}`      | Serve one cast as `application/x-asciicast`                    |
+
+### Security
+
+- Sandboxed to `<workspace>/hosts/<host>/pty/`. The serve endpoint
+  validates `host` via :func:`wlb.infra.workspace.is_safe_host`,
+  enforces a `.cast` suffix, rejects traversal in the filename, and
+  resolves the path through `Path.resolve()` to refuse any symlink that
+  escapes the workspace.
+- No auth in M3.x — same posture as the rest of the dashboard. Don't
+  expose past localhost without a reverse proxy in front.
+
+### Air-gapped install
+
+The player CSS + JS are loaded from jsDelivr by default. To vendor
+locally:
+
+```bash
+VER=3.8.0
+mkdir -p src/wlb/api/static/vendor
+curl -L "https://cdn.jsdelivr.net/npm/asciinema-player@${VER}/dist/bundle/asciinema-player.css" \
+     -o src/wlb/api/static/vendor/asciinema-player.css
+curl -L "https://cdn.jsdelivr.net/npm/asciinema-player@${VER}/dist/bundle/asciinema-player.min.js" \
+     -o src/wlb/api/static/vendor/asciinema-player.min.js
+```
+
+Then edit `src/wlb/api/static/casts.html` to point the CDN URLs at
+`/static/vendor/...`.
+
+### Tests
+
+`tests/api/test_casts_endpoints.py` (13 tests): empty list, metadata
+shape, skips non-cast files, skips unsafe host dirs, skips hosts
+without `pty/`; serve happy path with correct media type, 404 on
+missing, 400 on unsafe host / non-cast extension / dot-prefixed name /
+traversal in filename, and a symlink-escape test that confirms the
+resolved path stays inside `<workspace>/hosts`.
+
+---
+
 ## What's next
 
-- **Replay UI** (potential M3.8): vendor `asciinema-player` JS bundle
-  next to the dashboard and add a `/casts.html` page that lists the
-  workspace's recordings + plays one inline.
 - **Real Windows walkthrough**: spin up Windows + OpenSSH + wlb-agent
   with `pywinpty`, verify the ConPTY paths (local + agent) for real.
+- **MCP progress notifications**: surface tool streaming + PTY exit
+  through the standard MCP `notifications/progress` channel once
+  client support is widespread.

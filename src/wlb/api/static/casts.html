@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wlb — casts</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!--
+    asciinema-player v3 loaded from jsDelivr. For air-gapped environments,
+    vendor the assets locally — see docs/pty.md "Replay UI" section.
+  -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css">
+  <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>wlb · casts</h1>
+    <span class="tagline">PTY recordings</span>
+    <span class="meta"><a href="/" class="link">← dashboard</a></span>
+    <span class="meta"><a href="/pty.html" class="link">open PTY →</a></span>
+  </header>
+
+  <main class="casts-main">
+    <aside class="casts-sidebar">
+      <div class="casts-sidebar-header">
+        <h2>Recordings</h2>
+        <button id="refresh-btn" class="ghost" type="button">refresh</button>
+      </div>
+      <div id="casts-list" class="casts-list">loading…</div>
+      <div class="casts-sidebar-help">
+        Recordings live under <code>workspace/hosts/&lt;host&gt;/pty/</code>.
+        Enable capture with <code>WLB_PTY_RECORD=1</code> or
+        <code>[pty] record = true</code> in your profile.
+      </div>
+    </aside>
+
+    <section class="casts-player-wrap">
+      <div id="casts-meta" class="casts-meta">pick a recording from the left.</div>
+      <div id="player-host" class="casts-player"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>asciinema-player v3 · cast files under workspace/hosts/*/pty/ · ⚠ localhost-only and no auth</span>
+  </footer>
+
+  <script src="/static/casts.js" defer></script>
+</body>
+</html>

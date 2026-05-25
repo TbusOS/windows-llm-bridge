@@ -27,7 +27,8 @@
 | **M3.5**  | Windows-local PTY (ConPTY) — pywinpty dispatch + dispatch tests         | shipped |
 | **M3.6**  | HTTP PTY — wlb-agent `WS /v1/pty` + `HttpPtySession`                    | shipped |
 | **M3.7**  | PTY recording — asciinema v2 `.cast` writer at PtySession boundary      | shipped |
-| **M3**    | Skill packs + MCP progress notifications + replay UI                    | in progress |
+| **M3.8**  | Replay UI — `/casts.html` + asciinema-player v3 + list/serve endpoints  | shipped |
+| **M3**    | Skill packs + MCP progress notifications + real Windows walkthrough     | in progress |
 
 ---
 
@@ -360,6 +361,44 @@ recorder works identically across local / SSH / HTTP transports.
 produces a valid `.cast` file under
 `workspace/hosts/<host>/pty/<ts>-<interp>.cast` that
 `asciinema play` can replay verbatim.
+
+---
+
+## M3.8 — Replay UI (shipped)
+
+Browser-based viewer for the `.cast` files produced by M3.7. Adds a
+`/casts.html` dashboard page powered by asciinema-player v3 and two
+sandboxed API endpoints to list + serve recordings.
+
+- [x] `src/wlb/api/server.py`:
+  - [x] `GET /api/casts` — list `.cast` files under
+        `workspace/hosts/<host>/pty/` newest-first, with metadata
+        (host / filename / path / size / mtime). Skips unsafe host
+        directory names and missing `pty/` subdirs.
+  - [x] `GET /api/casts/{host}/{filename}` — serve one cast as
+        `application/x-asciicast`. Validates host via `is_safe_host`,
+        rejects non-`.cast` extensions / traversal / dot-prefixed
+        filenames, resolves the path through `Path.resolve()` to
+        refuse symlinks escaping `<workspace>/hosts`.
+  - [x] `GET /casts.html` — explicit route (same pattern as `/pty.html`).
+- [x] `src/wlb/api/static/casts.html` (new) — vanilla JS page with a
+      sidebar list + player pane. Loads asciinema-player v3 from
+      jsDelivr (vendoring instructions in `docs/pty.md`).
+- [x] `src/wlb/api/static/casts.js` (new) — fetches `/api/casts`,
+      renders sidebar buttons, on click disposes any previous player
+      and creates a fresh `AsciinemaPlayer.create(...)` instance.
+- [x] `src/wlb/api/static/style.css` — `.casts-main` / `.casts-sidebar`
+      / `.cast-item` / `.casts-player` rules in the existing dark
+      theme.
+- [x] `src/wlb/api/static/index.html` — dashboard header gains a
+      `casts →` link next to `open PTY →`.
+- [x] Tests: `tests/api/test_casts_endpoints.py` (13).
+- [x] Docs: `docs/pty.md` "Replay UI (M3.8)" section with the endpoint
+      matrix, security notes, and air-gapped vendoring instructions.
+
+**Done when:** With `WLB_PTY_RECORD=1`, opening `/pty.html` and running
+a session produces a `.cast` file that shows up in `/casts.html` and
+plays back in the browser.
 
 ---
 

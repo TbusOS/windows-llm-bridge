@@ -42,6 +42,7 @@ from wlb.capabilities.tool import list_tools as cap_list_tools
 from wlb.capabilities.tool import run_tool_stream as cap_run_tool_stream
 from wlb.capabilities.tool import show_tool as cap_show_tool
 from wlb.infra.config import load_active
+from wlb.infra.workspace import is_safe_host, workspace_root
 from wlb.mcp.transport_factory import build_transport
 
 
@@ -83,6 +84,13 @@ def create_app(profile_name: str | None = None) -> FastAPI:
         if pty_path.exists():
             return FileResponse(str(pty_path), media_type="text/html")
         raise HTTPException(status_code=404, detail="pty.html not bundled")
+
+    @app.get("/casts.html", include_in_schema=False)
+    async def casts_page() -> Any:
+        p = _STATIC_DIR / "casts.html"
+        if p.exists():
+            return FileResponse(str(p), media_type="text/html")
+        raise HTTPException(status_code=404, detail="casts.html not bundled")
 
     # ── meta ─────────────────────────────────────────────────────
     @app.get("/api/version")
@@ -129,6 +137,70 @@ def create_app(profile_name: str | None = None) -> FastAPI:
                 "dir": s.pty_record.dir,
             },
         }
+
+    # ── cast recordings (M3.8) ──────────────────────────────────
+    @app.get("/api/casts")
+    async def api_casts() -> dict[str, Any]:
+        """List .cast PTY recordings under ``workspace/hosts/*/pty/``.
+
+        Returns newest-first per host (sorted by filename, which is a
+        UTC timestamp — see :func:`wlb.infra.workspace.iso_timestamp`).
+        Skips files that fail ``stat()`` and host directories whose name
+        wouldn't pass :func:`is_safe_host`.
+        """
+        root = workspace_root() / "hosts"
+        items: list[dict[str, Any]] = []
+        if root.exists():
+            for host_dir in sorted(root.iterdir()):
+                if not host_dir.is_dir() or not is_safe_host(host_dir.name):
+                    continue
+                pty_dir = host_dir / "pty"
+                if not pty_dir.is_dir():
+                    continue
+                for f in sorted(pty_dir.iterdir(), reverse=True):
+                    if not f.is_file() or f.suffix != ".cast":
+                        continue
+                    try:
+                        st = f.stat()
+                    except OSError:
+                        continue
+                    items.append({
+                        "host": host_dir.name,
+                        "filename": f.name,
+                        "path": f"{host_dir.name}/{f.name}",
+                        "size": st.st_size,
+                        "modified": int(st.st_mtime),
+                    })
+        return {"ok": True, "casts": items, "root": str(root)}
+
+    @app.get("/api/casts/{host}/{filename}")
+    async def api_cast_serve(host: str, filename: str) -> Any:
+        """Serve one ``.cast`` file, sandboxed inside ``workspace/hosts/<host>/pty/``.
+
+        Refuses anything that isn't a plain ``.cast`` filename inside a
+        valid host directory — directly served path must resolve under
+        ``<workspace>/hosts`` after symlink resolution.
+        """
+        if not is_safe_host(host):
+            raise HTTPException(status_code=400, detail="invalid host")
+        if not filename.endswith(".cast"):
+            raise HTTPException(status_code=400, detail="not a .cast file")
+        if "/" in filename or "\\" in filename or filename.startswith(".") or ".." in filename:
+            raise HTTPException(status_code=400, detail="invalid filename")
+
+        root = (workspace_root() / "hosts").resolve()
+        target = (root / host / "pty" / filename).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="path escapes workspace") from e
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="cast not found")
+        return FileResponse(
+            str(target),
+            media_type="application/x-asciicast",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
 
     @app.get("/api/maps")
     async def api_maps() -> dict[str, Any]:
