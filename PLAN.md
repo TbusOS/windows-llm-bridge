@@ -25,7 +25,8 @@
 | **M3.3**  | Web UI — FastAPI dashboard + WebSocket tool-run streaming               | shipped |
 | **M3.4**  | Interactive PTY — base ABC + Local (Unix) + SSH + xterm.js page         | shipped |
 | **M3.5**  | Windows-local PTY (ConPTY) — pywinpty dispatch + dispatch tests         | shipped |
-| **M3**    | HTTP PTY + skill packs + MCP progress notifications + PTY recording    | in progress |
+| **M3.6**  | HTTP PTY — wlb-agent `WS /v1/pty` + `HttpPtySession`                    | shipped |
+| **M3**    | Skill packs + MCP progress notifications + PTY recording                | in progress |
 
 ---
 
@@ -261,6 +262,49 @@ project.
 - Full M2 success criteria from REQUIREMENTS §7 work end-to-end.
 - A user can declare a tool in TOML, the agent can call it through MCP,
   and structured progress + final status come back.
+
+---
+
+## M3.6 — HTTP PTY (shipped)
+
+Closes the last gap in the PTY coverage: HTTP transport now serves
+interactive PTY through a WebSocket on the wlb-agent.
+
+- [x] `src/wlb/transport/http.py`:
+  - [x] `HttpPtySession` (PtySession subclass, WS-backed) — bidirectional
+        binary + text-control JSON; internal buffer chops oversized frames;
+        `asyncio.Lock` serializes concurrent `read()` callers.
+  - [x] `HttpTransport.open_pty` — translates `http(s)://` to `ws(s)://`,
+        sends start frame, waits for `started` or `error`.
+  - [x] `_ws_url` / `_ws_ssl_context` helpers honor `verify_tls` + `ca_bundle`.
+  - [x] `supports_pty = True`.
+- [x] `scripts/windows-agent/wlb_agent.py`:
+  - [x] `_PtyAdapter` cross-platform: pywinpty on Win32, `pty.openpty` on
+        Unix (for dev / tests, agent on Linux still serves `/v1/pty`).
+  - [x] `WS /v1/pty` endpoint: Bearer auth on handshake (close 1008 on
+        rejection), start-frame validation, pump-to-WS + WS-to-PTY in a
+        single task group, control JSON dispatch (`resize` / `close`).
+- [x] `pyproject.toml` — `websockets>=12.0` as direct dep (was transitive
+      via uvicorn[standard]; making it explicit so HttpPtySession's import
+      isn't accidentally orphaned).
+- [x] `wlb.infra.registry` — pty capability `supported_transports` adds
+      `"http"`; HttpTransport spec gains `/v1/pty` reference.
+- [x] Tests:
+  - [x] `tests/transport/test_http_pty_client.py` (20 tests) —
+        HttpPtySession against a `websockets.serve()` mock; covers
+        handshake, bytes, resize, exit, 8 error paths, `_ws_url` /
+        `_ws_ssl_context` helpers.
+  - [x] `tests/transport/test_wlb_agent_pty.py` (7 tests) — end-to-end
+        contract against the real agent under uvicorn on a free port;
+        verifies handshake, echo round-trip, resize, exit_code propagation,
+        auth + protocol violations.
+- [x] Docs: `docs/pty.md` "HTTP PTY (M3.6)" section + protocol table;
+      `docs/http-transport.md` adds `WS /v1/pty` row + bumps "What's next".
+
+**Done when:** `pytest -q` 283 passing (256 baseline + 27 new). The
+controller calls `HttpTransport.open_pty()` and gets a working
+PtySession over WS; the agent on Linux serves it with `pty.openpty`,
+on Windows with ConPTY.
 
 ---
 

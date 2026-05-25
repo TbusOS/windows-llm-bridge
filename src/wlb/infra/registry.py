@@ -61,10 +61,12 @@ TRANSPORTS: list[TransportSpec] = [
         name="http",
         impl_path="wlb.transport.http.HttpTransport",
         status="beta",
-        requires=["httpx", "wlb-agent running on the Windows side"],
+        requires=["httpx", "websockets", "wlb-agent running on the Windows side"],
         description="HTTP fallback when SSH is blocked. Talks to "
                     "scripts/windows-agent/wlb_agent.py over HTTPS with a "
-                    "bearer token loaded from a mode-600 file.",
+                    "bearer token loaded from a mode-600 file. Streaming via "
+                    "/v1/shell/stream (NDJSON, M3.2); interactive PTY via "
+                    "WebSocket /v1/pty (M3.6).",
     ),
     TransportSpec(
         name="hybrid",
@@ -140,10 +142,12 @@ CAPABILITIES: list[CapabilitySpec] = [
         impl_path="wlb.api.server",
         cli_command="(browser) /pty.html",
         mcp_tools=[],
-        supported_transports=["ssh", "local"],
+        supported_transports=["ssh", "local", "http"],
         status="beta",
         description="Interactive PTY in the browser (xterm.js + WebSocket). "
-                    "ssh: asyncssh PTY channel; local: Unix pty.openpty().",
+                    "ssh: asyncssh PTY channel; local: Unix pty.openpty() / "
+                    "Windows ConPTY (pywinpty); http: WebSocket /v1/pty on "
+                    "wlb-agent (M3.6).",
     ),
 ]
 

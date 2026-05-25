@@ -54,7 +54,7 @@ except ModuleNotFoundError:                 # pragma: no cover — Win Py 3.10 f
     import tomli as tomllib                  # type: ignore[import-not-found,no-redef]
 
 try:
-    from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
+    from fastapi import Body, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.responses import JSONResponse, StreamingResponse
 except ModuleNotFoundError as e:             # pragma: no cover
     raise SystemExit(
@@ -308,6 +308,214 @@ async def stream_command(cmd: str, interpreter: str, timeout: int) -> AsyncItera
     })
 
 
+# ─── PTY adapter (M3.6) ─────────────────────────────────────────
+#
+# The agent ships a tiny cross-platform PTY backend so /v1/pty works on
+# the production Windows host (ConPTY via pywinpty) AND on dev/test boxes
+# (Unix pty.openpty + /bin/sh). Anything more exotic than this is up to
+# the controller (HttpPtySession just speaks WebSocket bytes).
+
+
+class _PtyAdapter:
+    """Uniform read/write/resize/wait/close over winpty (Win32) or pty.openpty (Unix)."""
+
+    def __init__(
+        self,
+        *,
+        backend: str,
+        proc: Any,
+        master_fd: int | None = None,
+    ) -> None:
+        self._backend = backend                 # "winpty" | "unix"
+        self._proc = proc
+        self._master_fd = master_fd
+        self._closed = False
+
+    @property
+    def pid(self) -> int:
+        return int(getattr(self._proc, "pid", -1) or -1)
+
+    async def read(self, n: int = 4096) -> bytes:
+        if self._closed:
+            return b""
+        if self._backend == "winpty":
+            try:
+                data = await asyncio.to_thread(self._proc.read, n)
+            except (EOFError, OSError):
+                return b""
+            if not data:
+                return b""
+            if isinstance(data, str):
+                return data.encode("utf-8", errors="replace")
+            return bytes(data)
+        # unix
+        assert self._master_fd is not None
+        try:
+            return await asyncio.to_thread(os.read, self._master_fd, n)
+        except OSError:
+            return b""
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or not data:
+            return
+        if self._backend == "winpty":
+            try:
+                payload = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else data
+                await asyncio.to_thread(self._proc.write, payload)
+            except (EOFError, OSError):
+                pass
+            return
+        assert self._master_fd is not None
+        try:
+            await asyncio.to_thread(os.write, self._master_fd, data)
+        except OSError:
+            pass
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._closed:
+            return
+        if self._backend == "winpty":
+            try:
+                await asyncio.to_thread(self._proc.setwinsize, int(rows), int(cols))
+            except (EOFError, OSError, AttributeError):
+                pass
+            return
+        assert self._master_fd is not None
+        try:
+            import fcntl
+            import struct
+            import termios
+
+            packed = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+            fcntl.ioctl(self._master_fd, termios.TIOCSWINSZ, packed)
+        except (OSError, ModuleNotFoundError):
+            pass
+
+    async def wait(self) -> int:
+        if self._backend == "winpty":
+            # pywinpty PtyProcess has no awaitable wait — poll isalive().
+            while True:
+                if not self._proc.isalive():
+                    return int(self._proc.exitstatus or 0)
+                await asyncio.sleep(0.05)
+        try:
+            await self._proc.wait()
+        except Exception:                       # noqa: BLE001
+            pass
+        return int(self._proc.returncode if self._proc.returncode is not None else -1)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._backend == "winpty":
+            try:
+                self._proc.terminate(force=True)
+            except Exception:                   # noqa: BLE001
+                pass
+            return
+        # unix
+        assert self._master_fd is not None
+        try:
+            os.close(self._master_fd)
+        except OSError:
+            pass
+        if getattr(self._proc, "returncode", None) is None:
+            try:
+                self._proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(self._proc.wait(), timeout=2)
+            except (asyncio.TimeoutError, Exception):       # noqa: BLE001
+                try:
+                    self._proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await self._proc.wait()
+                except Exception:                            # noqa: BLE001
+                    pass
+
+
+def _pty_argv_windows(interpreter: str) -> list[str]:
+    if interpreter == "powershell":
+        for cand in ("pwsh.exe", "powershell.exe"):
+            if shutil.which(cand):
+                return [cand, "-NoProfile", "-NoLogo"]
+        return ["powershell.exe", "-NoProfile", "-NoLogo"]
+    return ["cmd.exe"]
+
+
+def _pty_argv_unix(_interpreter: str) -> list[str]:
+    # Dev / test only — wraps the controller in /bin/sh -i regardless of
+    # interpreter so non-Windows agents can exercise the WS protocol.
+    return ["/bin/sh", "-i"]
+
+
+async def spawn_pty(
+    *,
+    interpreter: str,
+    cols: int,
+    rows: int,
+    term_type: str,
+) -> _PtyAdapter:
+    """Spawn an interactive shell behind a PTY, returning an adapter.
+
+    Windows path requires the optional `pywinpty` package — raises
+    :class:`NotImplementedError` with the install hint if missing. Unix
+    fallback uses :func:`pty.openpty` so agents booted on Linux/macOS
+    (typical for tests + initial integration) still serve `/v1/pty`.
+    """
+    if sys.platform == "win32":
+        try:
+            import winpty                                    # type: ignore[import-not-found]
+        except ImportError as e:                             # pragma: no cover — Win-only
+            raise NotImplementedError(
+                "Windows PTY needs pywinpty. Install with: pip install pywinpty"
+            ) from e
+        argv = _pty_argv_windows(interpreter)
+        proc = await asyncio.to_thread(
+            winpty.PtyProcess.spawn,
+            argv,
+            dimensions=(int(rows), int(cols)),
+            env={**os.environ, "TERM": term_type},
+        )
+        return _PtyAdapter(backend="winpty", proc=proc)
+
+    import pty
+
+    argv = _pty_argv_unix(interpreter)
+    master_fd, slave_fd = pty.openpty()
+    try:
+        try:
+            import fcntl
+            import struct
+            import termios
+
+            packed = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, packed)
+        except (OSError, ModuleNotFoundError):
+            pass
+
+        env = dict(os.environ)
+        env["TERM"] = term_type
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+            start_new_session=True,
+        )
+    finally:
+        try:
+            os.close(slave_fd)
+        except OSError:
+            pass
+    return _PtyAdapter(backend="unix", proc=proc, master_fd=master_fd)
+
+
 # ─── FastAPI app ─────────────────────────────────────────────────
 
 
@@ -441,6 +649,145 @@ def build_app(token: str) -> FastAPI:
         if not src.is_file():
             raise HTTPException(status_code=400, detail="path is not a regular file")
         return StreamingResponse(_stream_file(src), media_type="application/octet-stream")
+
+    @app.websocket("/v1/pty")
+    async def ws_pty(websocket: WebSocket) -> None:
+        """Bidirectional PTY pump over WebSocket (M3.6).
+
+        Wire protocol — see :class:`wlb.transport.http.HttpPtySession`. Auth
+        is the same Bearer token as the REST endpoints, supplied via the
+        ``Authorization`` header on the handshake. Bad auth closes the
+        socket with HTTP 403 BEFORE accepting (websockets client surfaces
+        this as :class:`InvalidStatus`).
+        """
+        header = websocket.headers.get("authorization", "")
+        provided = header[len("Bearer "):].strip() if header.lower().startswith("bearer ") else ""
+        if not provided or not secrets.compare_digest(provided, token):
+            await websocket.close(code=1008)  # HTTP 403 during handshake
+            return
+        await websocket.accept()
+
+        session: _PtyAdapter | None = None
+        pump_task: asyncio.Task | None = None
+        try:
+            # ── first frame: start ─────────────────────────────────
+            try:
+                raw = await websocket.receive_text()
+                opts = json.loads(raw)
+            except (WebSocketDisconnect, ValueError, TypeError) as e:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "BAD_FIRST_FRAME", "message": str(e),
+                }))
+                await websocket.close(code=1003)
+                return
+
+            if not isinstance(opts, dict) or opts.get("type") != "start":
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "BAD_FIRST_FRAME",
+                    "message": "expected type=start",
+                }))
+                await websocket.close(code=1003)
+                return
+
+            interpreter = str(opts.get("interpreter", "cmd"))
+            try:
+                cols = int(opts.get("cols", 80))
+                rows = int(opts.get("rows", 24))
+            except (ValueError, TypeError):
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "BAD_DIMENSIONS",
+                    "message": "cols / rows must be integers",
+                }))
+                await websocket.close(code=1003)
+                return
+            term_type = str(opts.get("term_type", "xterm-256color"))
+
+            if interpreter not in ("cmd", "powershell", "raw"):
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "BAD_INTERPRETER", "message": interpreter,
+                }))
+                await websocket.close(code=1003)
+                return
+
+            # ── spawn PTY ──────────────────────────────────────────
+            try:
+                session = await spawn_pty(
+                    interpreter=interpreter, cols=cols, rows=rows, term_type=term_type,
+                )
+            except NotImplementedError as e:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "PTY_NOT_AVAILABLE", "message": str(e),
+                }))
+                await websocket.close(code=1011)
+                return
+            except (OSError, FileNotFoundError) as e:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "code": "PTY_SPAWN_FAILED", "message": str(e),
+                }))
+                await websocket.close(code=1011)
+                return
+
+            await websocket.send_text(json.dumps({"type": "started", "pid": session.pid}))
+
+            # ── pump PTY → WS ──────────────────────────────────────
+            async def pump_to_ws() -> None:
+                assert session is not None
+                while True:
+                    chunk = await session.read(4096)
+                    if not chunk:
+                        break
+                    try:
+                        await websocket.send_bytes(chunk)
+                    except (WebSocketDisconnect, RuntimeError):
+                        return
+                exit_code = await session.wait()
+                try:
+                    await websocket.send_text(json.dumps(
+                        {"type": "exit", "exit_code": exit_code}
+                    ))
+                except Exception:                       # noqa: BLE001
+                    pass
+
+            pump_task = asyncio.create_task(pump_to_ws())
+
+            # ── pump WS → PTY ──────────────────────────────────────
+            while True:
+                try:
+                    message = await websocket.receive()
+                except WebSocketDisconnect:
+                    break
+                mtype = message.get("type")
+                if mtype == "websocket.disconnect":
+                    break
+                if "bytes" in message and message["bytes"] is not None:
+                    await session.write(message["bytes"])
+                elif "text" in message and message["text"] is not None:
+                    try:
+                        ctrl = json.loads(message["text"])
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(ctrl, dict):
+                        continue
+                    ctype = ctrl.get("type")
+                    if ctype == "resize":
+                        try:
+                            await session.resize(int(ctrl["cols"]), int(ctrl["rows"]))
+                        except (KeyError, ValueError, TypeError):
+                            pass
+                    elif ctype == "close":
+                        break
+        finally:
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:                       # noqa: BLE001
+                    pass
+            if pump_task is not None and not pump_task.done():
+                pump_task.cancel()
+            try:
+                await websocket.close()
+            except Exception:                           # noqa: BLE001
+                pass
 
     return app
 

@@ -49,6 +49,7 @@ dependencies = [
     # Async helpers
     "anyio>=4.0.0",
     "httpx>=0.26.0",               # HTTP transport (M2) + general client
+    "websockets>=12.0",            # HTTP PTY transport (M3.6) — controller side
 ]
 
 [project.optional-dependencies]

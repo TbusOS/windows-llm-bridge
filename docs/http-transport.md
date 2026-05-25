@@ -45,8 +45,10 @@ HTTPS (default 8443) ───────────────────�
 | POST   | `/v1/shell/stream` (M3.2) | `{cmd, interpreter, timeout}`              | NDJSON stream (`application/x-ndjson`) — see below |
 | POST   | `/v1/file/push?path=...`  | raw bytes (`application/octet-stream`)     | `{ok, bytes, path}`                       |
 | GET    | `/v1/file/pull?path=...`  | —                                          | bytes (`application/octet-stream`)        |
+| WS     | `/v1/pty` (M3.6)          | binary + text frames                       | bidirectional PTY pump — see `docs/pty.md` |
 
-All requests require `Authorization: Bearer <token>`.
+All requests require `Authorization: Bearer <token>` (WebSocket includes
+it on the HTTP handshake).
 
 ### `/v1/shell/stream` (M3.2)
 
@@ -167,9 +169,9 @@ verify_tls      = true
 ## Limits and what's next
 
 - **Single-file push only** in M2.4. Recursive directory push is M2.4.1.
-- **No live streaming** — the agent captures full output before responding.
-  Long-running tools won't surface progress mid-flight. M3 will add a
-  chunked-streaming endpoint.
+- **Live streaming** shipped in M3.2 (`/v1/shell/stream`, NDJSON).
+- **Interactive PTY** shipped in M3.6 (`WS /v1/pty`, WebSocket binary +
+  control JSON). See `docs/pty.md` for the full wire protocol.
 - **No HTTP connection pool yet**. Each transport call opens an httpx
   client. The MCP server pays a small per-call cost. Pooling here will
   mirror the SSH pool design (`src/wlb/transport/ssh_pool.py`); deferred

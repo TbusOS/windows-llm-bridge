@@ -1,4 +1,4 @@
-# Interactive PTY (M3.4)
+# Interactive PTY (M3.4 → M3.6)
 
 A browser-based interactive terminal for wlb. Opens an xterm.js terminal,
 pipes keystrokes over a WebSocket to the active transport's PTY, streams
@@ -18,14 +18,16 @@ transport), just with a different I/O loop.
 
 ## Where it lives
 
-- Page: `/pty.html` (linked from the dashboard header as `open PTY →`).
-- WebSocket: `/ws/pty`.
-- Transports: `LocalTransport` (Unix only — uses `pty.openpty`) and
-  `SshTransport` (asyncssh `create_process` with a PTY channel on the
-  pooled connection).
-
-`HttpTransport` does NOT implement PTY in M3.4 — the wlb-agent needs its
-own WS endpoint first. See "What's next" below.
+- Dashboard page: `/pty.html` (linked from the dashboard header as `open PTY →`).
+- Dashboard WebSocket: `/ws/pty` (wlb-api → active transport).
+- Transports:
+  - `LocalTransport` — Unix `pty.openpty` (M3.4) + Windows ConPTY via
+    `pywinpty` (M3.5, optional `windows-local-pty` extra).
+  - `SshTransport` — asyncssh `create_process` with a PTY channel on the
+    pooled connection.
+  - `HttpTransport` — `WebSocket /v1/pty` on the wlb-agent (M3.6, see
+    [HTTP PTY](#http-pty-m36) below). The dashboard wraps this transparently;
+    `HttpPtySession` is also callable directly from controller code.
 
 ---
 
@@ -205,10 +207,69 @@ Windows walkthrough rather than a CI assertion.
 
 ---
 
+## HTTP PTY (M3.6)
+
+When SSH is blocked by network policy, the HTTP transport still gets a
+real interactive PTY by talking to the wlb-agent's `WS /v1/pty` endpoint.
+The on-the-wire contract is intentionally tighter than the dashboard's
+internal `/ws/pty` so it can be re-implemented in other languages.
+
+### Wire protocol
+
+Auth: `Authorization: Bearer <token>` on the handshake — same token as
+the REST endpoints. Bad / missing auth → handshake rejected with 1008
+(websockets clients see `InvalidStatus` / `ConnectionClosed`).
+
+| Direction       | Frame type | Payload                                                                              |
+|-----------------|-----------|--------------------------------------------------------------------------------------|
+| client → server | text JSON (1st) | `{"type":"start","interpreter":"cmd"\|"powershell"\|"raw","cols":N,"rows":N,"term_type":"xterm-256color"}` |
+| server → client | text JSON | `{"type":"started","pid":N}` (success, sent once)                                    |
+| server → client | text JSON | `{"type":"error","code":"BAD_FIRST_FRAME"\|"BAD_INTERPRETER"\|"PTY_NOT_AVAILABLE"\|"PTY_SPAWN_FAILED","message":"..."}` |
+| client → server | binary    | keystrokes / paste — written to PTY stdin                                            |
+| client → server | text JSON | `{"type":"resize","cols":N,"rows":N}` or `{"type":"close"}`                          |
+| server → client | binary    | raw PTY output bytes                                                                 |
+| server → client | text JSON | `{"type":"exit","exit_code":N}` (terminal — server closes after)                     |
+
+Either side may close at any time; the agent kills the PTY in its
+`finally` block.
+
+### Agent-side PTY backend
+
+The single-file agent ships a tiny `_PtyAdapter` with two backends:
+
+- **Windows (production)** — `pywinpty.PtyProcess.spawn` (ConPTY on
+  Windows 10 1809+, winpty shim on older). Requires `pip install pywinpty`
+  on the Windows host where the agent runs.
+- **Unix (dev / test)** — `pty.openpty()` + `/bin/sh -i`. Lets the
+  agent serve a working PTY on Linux so contract tests run on CI without
+  a Windows machine.
+
+### Controller-side `HttpPtySession`
+
+`wlb.transport.http.HttpPtySession` is a `PtySession` subclass over a
+single WebSocket. Internal buffer chops oversized frames across multiple
+`read(n)` calls. Concurrent `read` / `write` is safe — websockets
+permits one task per direction; an internal `asyncio.Lock` serializes
+multiple `read()` callers.
+
+### Tests
+
+- `tests/transport/test_http_pty_client.py` — `HttpPtySession` against
+  a `websockets.serve()` mock that exercises handshake, bytes, resize,
+  exit, and 7 error paths (auth fail, bad first kind, binary before
+  started, garbled JSON, etc.).
+- `tests/transport/test_wlb_agent_pty.py` — end-to-end against the
+  real agent under uvicorn on a free port; verifies the
+  controller ↔ agent contract on a Linux box (using the Unix PTY
+  backend; Windows ConPTY validates via the walkthrough).
+
+---
+
 ## What's next
 
-- **HTTP transport PTY** (M3.6): add a `WS /v1/pty` to the wlb-agent
-  and an `HttpPtySession` on the controller. NDJSON won't fit
-  (bidirectional binary), so this is a WebSocket-only contract.
 - **Recording / replay** (M3.7): asciinema-style cast files saved under
-  `workspace/hosts/<host>/pty/<ts>.cast`.
+  `workspace/hosts/<host>/pty/<ts>.cast`. Tap into the existing
+  `PtySession.read` / `write` boundary so all three transports record
+  uniformly.
+- **Real Windows walkthrough**: spin up Windows + OpenSSH + wlb-agent
+  with `pywinpty`, verify the ConPTY paths (local + agent) for real.

@@ -29,16 +29,19 @@ TLS:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import ssl
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import httpx
+import websockets
 
-from wlb.transport.base import Interpreter, ShellResult, StreamEvent, Transport
+from wlb.transport.base import Interpreter, PtySession, ShellResult, StreamEvent, Transport
 
 
 def _read_token(token_file: str | None) -> str | None:
@@ -59,10 +62,125 @@ def _read_token(token_file: str | None) -> str | None:
         return None
 
 
+class HttpPtySession(PtySession):
+    """PTY backed by a WebSocket to wlb-agent's ``/v1/pty`` endpoint.
+
+    Wire protocol (matches the agent side):
+
+        client → text JSON, first message:
+            {"type":"start","interpreter":...,"cols":...,"rows":...,"term_type":...}
+        server → text JSON:
+            {"type":"started","pid":N}                 (success, sent once)
+            {"type":"error","code":...,"message":...}  (failure, then closes)
+        client → binary frame                          → stdin bytes
+        client → text JSON:
+            {"type":"resize","cols":N,"rows":N}
+            {"type":"close"}                            (graceful client-side end)
+        server → binary frame                          → stdout bytes
+        server → text JSON:
+            {"type":"exit","exit_code":N}              (terminal — server closes after)
+
+    Concurrency: :mod:`websockets` documents that one task may call ``send``
+    while another calls ``recv``; we rely on that — :meth:`read` runs in the
+    consumer's loop, :meth:`write` / :meth:`resize` run on user keystroke
+    events. An internal asyncio.Lock guards :meth:`read` so multiple readers
+    drain the same byte stream cleanly (the WS / API server pattern).
+    """
+
+    def __init__(self, ws: Any) -> None:
+        self._ws = ws
+        self._closed = False
+        self._exit_code: int | None = None
+        self._read_buffer = bytearray()
+        self._read_lock = asyncio.Lock()
+        self._exit_event = asyncio.Event()
+
+    async def read(self, n: int = 4096) -> bytes:
+        if self._closed and not self._read_buffer:
+            return b""
+        async with self._read_lock:
+            if self._read_buffer:
+                chunk = bytes(self._read_buffer[:n])
+                del self._read_buffer[:n]
+                return chunk
+            while True:
+                try:
+                    msg = await self._ws.recv()
+                except websockets.ConnectionClosed:
+                    self._closed = True
+                    self._exit_event.set()
+                    return b""
+                if isinstance(msg, (bytes, bytearray, memoryview)):
+                    data = bytes(msg)
+                    if not data:
+                        continue
+                    if len(data) <= n:
+                        return data
+                    self._read_buffer.extend(data[n:])
+                    return data[:n]
+                # text frame = control
+                try:
+                    payload = json.loads(msg)
+                except (ValueError, TypeError):
+                    continue
+                if payload.get("type") == "exit":
+                    self._exit_code = int(payload.get("exit_code", -1) or 0)
+                    self._exit_event.set()
+                    self._closed = True
+                    return b""
+                # Unknown / other text frames — skip and keep reading.
+                continue
+
+    async def write(self, data: bytes) -> None:
+        if self._closed or not data:
+            return
+        try:
+            await self._ws.send(bytes(data))
+        except websockets.ConnectionClosed:
+            self._closed = True
+            self._exit_event.set()
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if self._closed:
+            return
+        try:
+            await self._ws.send(json.dumps(
+                {"type": "resize", "cols": int(cols), "rows": int(rows)}
+            ))
+        except websockets.ConnectionClosed:
+            self._closed = True
+            self._exit_event.set()
+
+    async def wait(self) -> int:
+        await self._exit_event.wait()
+        return self._exit_code if self._exit_code is not None else -1
+
+    async def close(self) -> None:
+        if self._closed:
+            self._exit_event.set()
+            try:
+                await self._ws.close()
+            except Exception:                       # noqa: BLE001 — idempotent
+                pass
+            return
+        self._closed = True
+        # Hint the agent we're going away so it can flush an exit message.
+        try:
+            await self._ws.send(json.dumps({"type": "close"}))
+        except Exception:                           # noqa: BLE001
+            pass
+        try:
+            await self._ws.close()
+        except Exception:                           # noqa: BLE001
+            pass
+        self._exit_event.set()
+
+
 class HttpTransport(Transport):
     name = "http"
     supports_files = True
     supports_streaming = True    # real NDJSON streaming via /v1/shell/stream (M3.2)
+    supports_pty = True          # WebSocket /v1/pty (M3.6)
 
     def __init__(
         self,
@@ -335,6 +453,103 @@ class HttpTransport(Transport):
             artifacts=[local],
         )
 
+    async def open_pty(
+        self,
+        *,
+        interpreter: Interpreter = "cmd",
+        cols: int = 80,
+        rows: int = 24,
+        term_type: str = "xterm-256color",
+    ) -> PtySession:
+        """Open a PTY-backed shell over WebSocket to wlb-agent ``/v1/pty`` (M3.6).
+
+        - Translates ``http://``/``https://`` base_url to ``ws://``/``wss://``.
+        - Authenticates with the same Bearer token as the REST endpoints.
+        - TLS verify / CA bundle honor the same knobs as :meth:`shell`.
+        - Sends the ``start`` first frame and waits (up to ``connect_timeout``)
+          for ``started`` before returning. Any other first response (error
+          message, binary, garbled JSON) raises :class:`ConnectionError`.
+
+        Returns an :class:`HttpPtySession`. Caller owns ``close()`` (the WS
+        connection stays open for the life of the session).
+        """
+        cfg_err = self._validate_config()
+        if cfg_err is not None:
+            raise ConnectionError(cfg_err.stderr or "http transport not configured")
+
+        ws_url = self._ws_url("/v1/pty")
+        if ws_url is None:
+            raise ConnectionError(
+                f"unrecognized URL scheme in base_url={self.base_url!r} — "
+                "expected http:// or https://"
+            )
+
+        headers = [("Authorization", f"Bearer {self._token()}")]
+        ssl_ctx = self._ws_ssl_context(ws_url)
+
+        try:
+            ws = await websockets.connect(
+                ws_url,
+                additional_headers=headers,
+                ssl=ssl_ctx,
+                open_timeout=self.connect_timeout,
+                max_size=None,            # PTY chunks can be sizeable; no cap.
+                ping_interval=20,
+                ping_timeout=20,
+            )
+        except websockets.InvalidStatus as e:
+            status = getattr(e.response, "status_code", "?")
+            code = "HTTP_AUTH_FAILED" if status in (401, 403) else "HTTP_AGENT_ERROR"
+            raise ConnectionError(f"agent rejected ws handshake: HTTP {status} ({code})") from None
+        except (OSError, asyncio.TimeoutError) as e:
+            raise ConnectionError(f"ws connect failed: {e}") from None
+        except websockets.WebSocketException as e:
+            raise ConnectionError(f"ws connect failed: {e}") from None
+
+        # Send the start frame.
+        try:
+            await ws.send(json.dumps({
+                "type": "start",
+                "interpreter": interpreter,
+                "cols": int(cols),
+                "rows": int(rows),
+                "term_type": term_type,
+            }))
+        except websockets.ConnectionClosed as e:
+            raise ConnectionError(f"agent closed before start handshake: {e}") from None
+
+        # Wait for the agent's first response (started / error).
+        try:
+            first = await asyncio.wait_for(ws.recv(), timeout=self.connect_timeout)
+        except asyncio.TimeoutError as e:
+            await ws.close()
+            raise ConnectionError(
+                f"no response from agent within {self.connect_timeout}s"
+            ) from None
+        except websockets.ConnectionClosed as e:
+            raise ConnectionError(f"agent closed before sending started: {e}") from None
+
+        if isinstance(first, (bytes, bytearray, memoryview)):
+            await ws.close()
+            raise ConnectionError("agent sent binary before started — protocol mismatch")
+        try:
+            payload = json.loads(first)
+        except (ValueError, TypeError) as e:
+            await ws.close()
+            raise ConnectionError(f"agent sent non-JSON start response: {e}") from None
+
+        kind = payload.get("type")
+        if kind == "error":
+            await ws.close()
+            raise ConnectionError(
+                f"agent error: {payload.get('code', '?')} — {payload.get('message', '')}"
+            )
+        if kind != "started":
+            await ws.close()
+            raise ConnectionError(f"unexpected first message from agent: {payload}")
+
+        return HttpPtySession(ws=ws)
+
     async def health(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "ok": False,
@@ -409,6 +624,40 @@ class HttpTransport(Transport):
             timeout=httpx.Timeout(self.connect_timeout, connect=self.connect_timeout),
             verify=verify,
         )
+
+    def _ws_url(self, path: str) -> str | None:
+        """Translate ``base_url`` to a ``ws://`` / ``wss://`` URL with ``path`` appended.
+
+        Returns ``None`` if base_url isn't http(s) — caller raises a
+        configuration error so the user sees a clear message rather than
+        a downstream connect failure.
+        """
+        if not self.base_url:
+            return None
+        if self.base_url.startswith("https://"):
+            base = "wss://" + self.base_url[len("https://"):]
+        elif self.base_url.startswith("http://"):
+            base = "ws://" + self.base_url[len("http://"):]
+        else:
+            return None
+        return base.rstrip("/") + path
+
+    def _ws_ssl_context(self, ws_url: str) -> ssl.SSLContext | None:
+        """Build an SSL context for ``wss://`` URLs honoring verify_tls / ca_bundle.
+
+        Returns ``None`` for ``ws://`` so :func:`websockets.connect` doesn't
+        try to TLS-wrap a plain socket.
+        """
+        if not ws_url.startswith("wss://"):
+            return None
+        if not self.verify_tls:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+        if self.ca_bundle:
+            return ssl.create_default_context(cafile=os.path.expanduser(self.ca_bundle))
+        return ssl.create_default_context()
 
     def _fail(self, code: str, msg: str, started: float) -> ShellResult:
         return ShellResult(
