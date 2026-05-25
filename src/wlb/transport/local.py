@@ -142,6 +142,10 @@ class LocalTransport(Transport):
             on_windows if on_windows is not None else sys.platform == "win32"
         )
 
+    @property
+    def host_label(self) -> str:
+        return "local"
+
     def _resolve_executable(self, interpreter: Interpreter) -> tuple[str, list[str]]:
         """Return the ``(argv0, prefix_args)`` pair for the given interpreter.
 

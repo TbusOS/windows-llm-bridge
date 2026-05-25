@@ -26,6 +26,7 @@ def _isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "WLB_PROFILE", "WLB_TRANSPORT",
         "WLB_SSH_HOST", "WLB_SSH_PORT", "WLB_SSH_USER",
         "WLB_SSH_KEY", "WLB_SSH_KNOWN_HOSTS", "WLB_SSH_TIMEOUT",
+        "WLB_PTY_RECORD", "WLB_PTY_RECORD_INPUT", "WLB_PTY_RECORD_DIR",
     ):
         monkeypatch.delenv(k, raising=False)
     return tmp_path
@@ -133,3 +134,58 @@ def test_empty_string_treated_as_unset(tmp_path: Path) -> None:
     _write_profile(tmp_path, "default", '[ssh]\nhost = ""\n')
     settings = load_active()
     assert settings.ssh.host is None
+
+
+# ─── pty_record (M3.7) ──────────────────────────────────────────────
+
+
+def test_pty_record_defaults_to_disabled(tmp_path: Path) -> None:
+    settings = load_active()
+    assert settings.pty_record.enabled is False
+    assert settings.pty_record.record_input is False
+    assert settings.pty_record.dir is None
+
+
+def test_pty_record_picked_up_from_profile(tmp_path: Path) -> None:
+    _write_profile(
+        tmp_path, "default",
+        '[pty]\nrecord = true\nrecord_input = true\ndir = "/custom/path"\n',
+    )
+    settings = load_active()
+    assert settings.pty_record.enabled is True
+    assert settings.pty_record.record_input is True
+    assert settings.pty_record.dir == "/custom/path"
+
+
+def test_pty_record_env_overrides_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_profile(
+        tmp_path, "default",
+        '[pty]\nrecord = false\nrecord_input = false\n',
+    )
+    monkeypatch.setenv("WLB_PTY_RECORD", "1")
+    monkeypatch.setenv("WLB_PTY_RECORD_INPUT", "yes")
+    monkeypatch.setenv("WLB_PTY_RECORD_DIR", "/from-env")
+    settings = load_active()
+    assert settings.pty_record.enabled is True
+    assert settings.pty_record.record_input is True
+    assert settings.pty_record.dir == "/from-env"
+
+
+def test_pty_record_env_can_disable_when_profile_enables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_profile(tmp_path, "default", "[pty]\nrecord = true\n")
+    monkeypatch.setenv("WLB_PTY_RECORD", "0")
+    settings = load_active()
+    assert settings.pty_record.enabled is False
+
+
+def test_pty_record_unknown_env_string_falls_through_to_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_profile(tmp_path, "default", "[pty]\nrecord = true\n")
+    monkeypatch.setenv("WLB_PTY_RECORD", "maybe?")        # unknown → ignore
+    settings = load_active()
+    assert settings.pty_record.enabled is True

@@ -26,7 +26,8 @@
 | **M3.4**  | Interactive PTY — base ABC + Local (Unix) + SSH + xterm.js page         | shipped |
 | **M3.5**  | Windows-local PTY (ConPTY) — pywinpty dispatch + dispatch tests         | shipped |
 | **M3.6**  | HTTP PTY — wlb-agent `WS /v1/pty` + `HttpPtySession`                    | shipped |
-| **M3**    | Skill packs + MCP progress notifications + PTY recording                | in progress |
+| **M3.7**  | PTY recording — asciinema v2 `.cast` writer at PtySession boundary      | shipped |
+| **M3**    | Skill packs + MCP progress notifications + replay UI                    | in progress |
 
 ---
 
@@ -305,6 +306,60 @@ interactive PTY through a WebSocket on the wlb-agent.
 controller calls `HttpTransport.open_pty()` and gets a working
 PtySession over WS; the agent on Linux serves it with `pty.openpty`,
 on Windows with ConPTY.
+
+---
+
+## M3.7 — PTY recording (shipped)
+
+Transparent asciinema v2 cast recording. Wraps any `PtySession` so the
+recorder works identically across local / SSH / HTTP transports.
+
+- [x] `src/wlb/capabilities/pty_recorder.py`:
+  - [x] `CastRecorder` — v2 header + NDJSON event writer, `asyncio.Lock`-
+        guarded, line-buffered file, UTF-8 `errors="replace"`.
+  - [x] `RecordingPtySession(PtySession)` — transparent decorator;
+        `read` mirrors to `"o"` events, `write` optionally to `"i"`,
+        `close` closes inner then recorder.
+  - [x] `cast_path_for(host, interpreter, override_dir=None)` — workspace
+        path or external dir; traversal-safe.
+  - [x] `maybe_wrap(session, settings, ...)` — gate by settings; returns
+        unchanged session when disabled (zero overhead).
+- [x] `src/wlb/infra/config.py`:
+  - [x] `PtyRecordSettings(enabled, record_input, dir)` dataclass.
+  - [x] `_layer_bool` helper for env > profile > default with
+        `1/0/true/false/yes/no/on/off` normalization.
+  - [x] `[pty]` section + `WLB_PTY_RECORD` / `WLB_PTY_RECORD_INPUT` /
+        `WLB_PTY_RECORD_DIR` env support.
+- [x] `src/wlb/transport/base.py` + concrete classes:
+  - [x] `host_label` property — sanitized identifier for
+        `workspace/hosts/<label>/...`. local → `"local"`, ssh →
+        configured host (validated) else `"ssh"`, http → URL hostname
+        (validated) else `"http"`.
+- [x] `src/wlb/api/server.py`:
+  - [x] `ws_pty` wraps the opened PTY in `maybe_record_pty` with the
+        active profile's `pty_record` settings. No-op when disabled.
+  - [x] `/api/profile` surfaces the `pty_record` block so a dashboard
+        can show recording state.
+- [x] `src/wlb/infra/workspace.py` — docstring lists `pty` category.
+- [x] `src/wlb/infra/registry.py` — pty capability description mentions
+      recording + activation env.
+- [x] Tests (32 new, 315 total):
+  - [x] `tests/capabilities/test_pty_recorder.py` (19) — `.cast` header
+        + event encoding, UTF-8 replace, idempotent close, empty-write
+        drop, decorator passthrough, input gating, `cast_path_for`
+        defaults + override + traversal fallback, `maybe_wrap` gating,
+        end-to-end recording of a real `LocalPtySession`.
+  - [x] `tests/infra/test_profile.py` (5 new) — `[pty]` section + env
+        override + boolean normalization.
+  - [x] `tests/transport/test_host_label.py` (8) — every transport's
+        `host_label` resolves safely and refuses traversal.
+- [x] Docs: `docs/pty.md` "PTY recording (M3.7)" section + format
+      reference + activation matrix + replay commands.
+
+**Done when:** Setting `WLB_PTY_RECORD=1` and opening `/pty.html`
+produces a valid `.cast` file under
+`workspace/hosts/<host>/pty/<ts>-<interp>.cast` that
+`asciinema play` can replay verbatim.
 
 ---
 

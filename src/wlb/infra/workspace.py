@@ -8,6 +8,7 @@ SSH target name (sanitized). ``<category>`` is one of:
 - ``tools``          — per-named-tool run logs (M2)
 - ``pulls``          — files pulled from the Windows side (M2)
 - ``screenshots``    — UI captures (M3)
+- ``pty``            — asciinema-style ``.cast`` PTY recordings (M3.7)
 
 All ``<host>`` strings are validated against ``_SAFE_HOST_RE`` to refuse
 traversal attacks (``..``, embedded ``/``, etc.).

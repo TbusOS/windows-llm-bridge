@@ -226,6 +226,14 @@ class SshTransport(Transport):
         self.known_hosts = known_hosts
         self.connect_timeout = connect_timeout
 
+    @property
+    def host_label(self) -> str:
+        from wlb.infra.workspace import is_safe_host
+
+        if self.host and is_safe_host(self.host):
+            return self.host
+        return "ssh"
+
     # ── Public surface ─────────────────────────────────────────────
     async def shell(
         self,

@@ -199,6 +199,28 @@ class HttpTransport(Transport):
         self.connect_timeout = connect_timeout
         self.verify_tls = verify_tls
 
+    @property
+    def host_label(self) -> str:
+        """Hostname extracted from base_url, sanitized for workspace paths.
+
+        ``https://win-host.example:8443/`` → ``"win-host.example"``.
+        Invalid / unset URL → ``"http"`` so the host_label never collides
+        with another transport's bucket.
+        """
+        from urllib.parse import urlparse
+
+        from wlb.infra.workspace import is_safe_host
+
+        if not self.base_url:
+            return "http"
+        try:
+            host = urlparse(self.base_url).hostname or ""
+        except (ValueError, AttributeError):
+            return "http"
+        if host and is_safe_host(host):
+            return host
+        return "http"
+
     # ── public surface ─────────────────────────────────────────────
     async def shell(
         self,

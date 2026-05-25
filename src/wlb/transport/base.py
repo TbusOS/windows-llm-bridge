@@ -155,6 +155,18 @@ class Transport(ABC):
     supports_streaming: bool = False    # True for ssh / local / http (M3.x)
     supports_pty: bool = False          # True for ssh / local (M3.4)
 
+    @property
+    def host_label(self) -> str:
+        """Filesystem-safe host identifier for ``workspace/hosts/<label>/...``.
+
+        Used by capabilities that drop per-host artifacts (tool logs,
+        PTY recordings, etc.). Concrete transports override to surface
+        their real host name; the default falls back to ``self.name`` so
+        ``local`` / ``ssh`` / ``http`` are always valid bucket names even
+        when a transport hasn't been configured yet.
+        """
+        return self.name
+
     # ── Shell ─────────────────────────────────────────────────────
     @abstractmethod
     async def shell(

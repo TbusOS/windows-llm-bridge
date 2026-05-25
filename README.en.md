@@ -85,7 +85,7 @@ A side-by-side:
 | filesync   | `wlb fs push|pull` / `maps` | `wlb_push` / `wlb_pull`      | beta     | SFTP push/pull + SMB path translation + local-copy shortcut (skips SFTP when the mount is reachable) |
 | tool       | `wlb tool list / show / run [--stream]` | `wlb_tool_list` / `wlb_tool_show` / `wlb_tool_run` | beta     | User-declared tools in TOML (command_template + progress/success/failure regex + workdir); `--stream` for live line/progress/match events (M3.1); args reject shell metachars; full output captured to workspace/hosts/.../tools/.../<ts>.log |
 | web        | `wlb web` / `wlb-api`     | —                              | beta     | Local dashboard (FastAPI + WebSocket) — status / registry / tool runner with live streaming. Localhost-only default; **no auth in M3.3** — front with an authenticated reverse proxy if exposed |
-| pty        | (browser) /pty.html       | —                              | beta     | Interactive PTY terminal (xterm.js + WebSocket). ssh = asyncssh PTY channel; local = Unix pty.openpty() or Windows ConPTY via pywinpty (`uv sync --extra windows-local-pty`); http = wlb-agent `WS /v1/pty` (M3.6) |
+| pty        | (browser) /pty.html       | —                              | beta     | Interactive PTY terminal (xterm.js + WebSocket). ssh = asyncssh PTY channel; local = Unix pty.openpty() or Windows ConPTY via pywinpty (`uv sync --extra windows-local-pty`); http = wlb-agent `WS /v1/pty` (M3.6). Optional asciinema `.cast` recording: `WLB_PTY_RECORD=1` or `[pty] record=true` (M3.7) |
 
 ---
 

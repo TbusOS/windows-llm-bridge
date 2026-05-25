@@ -64,11 +64,26 @@ class HttpSettings:
 
 
 @dataclass(frozen=True)
+class PtyRecordSettings:
+    """PTY recording knobs (M3.7) — asciinema .cast files.
+
+    Default is OFF: most PTYs are interactive ad-hoc sessions and
+    silently recording every keystroke / output is surprising. Users
+    opt in per-profile or per-shell via env.
+    """
+
+    enabled: bool = False
+    record_input: bool = False        # True writes keystrokes too (caution: passwords)
+    dir: str | None = None            # Override path; default workspace/hosts/<host>/pty/
+
+
+@dataclass(frozen=True)
 class ActiveSettings:
     primary_transport: str
     ssh: SshSettings
     http: HttpSettings
     smb_maps: list[SmbMap] = field(default_factory=list)
+    pty_record: PtyRecordSettings = field(default_factory=PtyRecordSettings)
     profile_name: str = "default"
     profile_path: Path | None = None       # absolute path; None if no file
     profile_loaded: bool = False           # True if file existed and parsed
@@ -138,6 +153,29 @@ def _layer_int(env_name: str, profile_section: dict, profile_key: str, default: 
     return default
 
 
+def _layer_bool(env_name: str, profile_section: dict, profile_key: str, default: bool) -> bool:
+    """env > profile > default, coerced to bool.
+
+    Env values: ``"1"`` / ``"true"`` / ``"yes"`` / ``"on"`` → True;
+    ``"0"`` / ``"false"`` / ``"no"`` / ``"off"`` → False.
+    Unknown env strings fall back to the profile value.
+    """
+    env_val = os.environ.get(env_name)
+    if env_val not in (None, ""):
+        low = env_val.strip().lower()
+        if low in ("1", "true", "yes", "on"):
+            return True
+        if low in ("0", "false", "no", "off"):
+            return False
+    if profile_key in profile_section:
+        v = profile_section[profile_key]
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "yes", "on")
+    return default
+
+
 def load_active(profile_name: str | None = None) -> ActiveSettings:
     """Load active settings layered as: env > profile TOML > defaults."""
     name = _resolve_profile_name(profile_name)
@@ -161,6 +199,13 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
     else:
         verify_tls = bool(http_section.get("verify_tls", True)) if isinstance(http_section, dict) else True
 
+    pty_section = data.get("pty", {}) if isinstance(data.get("pty"), dict) else {}
+    pty_record = PtyRecordSettings(
+        enabled=_layer_bool("WLB_PTY_RECORD", pty_section, "record", False),
+        record_input=_layer_bool("WLB_PTY_RECORD_INPUT", pty_section, "record_input", False),
+        dir=_str_or_none(_layer("WLB_PTY_RECORD_DIR", pty_section, "dir", None)),
+    )
+
     return ActiveSettings(
         primary_transport=transport,
         ssh=SshSettings(
@@ -181,6 +226,7 @@ def load_active(profile_name: str | None = None) -> ActiveSettings:
             verify_tls=verify_tls,
         ),
         smb_maps=smb_maps,
+        pty_record=pty_record,
         profile_name=name,
         profile_path=path,
         profile_loaded=path.exists() and not warnings,

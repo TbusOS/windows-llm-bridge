@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 
 from wlb import __version__
 from wlb.capabilities.filesync import push as cap_push  # noqa: F401 — reserved for M3.4
+from wlb.capabilities.pty_recorder import maybe_wrap as maybe_record_pty
 from wlb.capabilities.status import describe as cap_describe
 from wlb.capabilities.status import status as cap_status
 from wlb.capabilities.tool import list_tools as cap_list_tools
@@ -121,6 +122,11 @@ def create_app(profile_name: str | None = None) -> FastAPI:
                 "ca_bundle": s.http.ca_bundle,
                 "verify_tls": s.http.verify_tls,
                 "connect_timeout": s.http.connect_timeout,
+            },
+            "pty_record": {
+                "enabled": s.pty_record.enabled,
+                "record_input": s.pty_record.record_input,
+                "dir": s.pty_record.dir,
             },
         }
 
@@ -260,6 +266,17 @@ def create_app(profile_name: str | None = None) -> FastAPI:
             except ConnectionError as e:
                 await websocket.send_text(json.dumps({"kind": "error", "error": str(e)}))
                 return
+
+            # Optional asciinema cast recording (M3.7). No-op when disabled.
+            settings = load_active(profile_name)
+            session = maybe_record_pty(
+                session,
+                settings.pty_record,
+                host=transport.host_label,
+                cols=cols, rows=rows,
+                interpreter=interpreter,
+                term_type="xterm-256color",
+            )
 
             # ── pump bytes from PTY out to the WS ──────────────
             async def pump_to_ws() -> None:

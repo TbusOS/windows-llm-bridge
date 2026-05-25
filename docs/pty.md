@@ -1,4 +1,4 @@
-# Interactive PTY (M3.4 → M3.6)
+# Interactive PTY (M3.4 → M3.7)
 
 A browser-based interactive terminal for wlb. Opens an xterm.js terminal,
 pipes keystrokes over a WebSocket to the active transport's PTY, streams
@@ -265,11 +265,112 @@ multiple `read()` callers.
 
 ---
 
+## PTY recording (M3.7)
+
+Every PTY opened through `/ws/pty` can be silently mirrored into an
+asciinema v2 `.cast` file. The recording layer is a transparent
+decorator at the `PtySession` boundary, so all three transports
+(`local` / `ssh` / `http`) record with identical code paths and the
+cast files replay in any standard asciinema player.
+
+### Activation (default OFF)
+
+| Surface         | Value                                                                    |
+|-----------------|--------------------------------------------------------------------------|
+| Env             | `WLB_PTY_RECORD=1` (`yes` / `true` / `on` accepted)                      |
+| Env (input too) | `WLB_PTY_RECORD_INPUT=1` — also record keystrokes (⚠ may include passwords) |
+| Env (path)      | `WLB_PTY_RECORD_DIR=/path/to/dir` — override the default location        |
+| Profile TOML    | `[pty]` section with `record`, `record_input`, `dir`                     |
+
+Env wins over profile, same as everywhere else.
+
+### Output location
+
+Default: `workspace/hosts/<host>/pty/<ts>-<interpreter>.cast`. `<host>`
+comes from `transport.host_label`:
+
+- `LocalTransport` → `"local"`
+- `SshTransport` → the configured `host` (sanitized by
+  `wlb.infra.workspace.is_safe_host`; falls back to `"ssh"`)
+- `HttpTransport` → the hostname parsed out of `base_url` (sanitized;
+  falls back to `"http"`)
+
+If `WLB_PTY_RECORD_DIR` / `[pty].dir` is set, files land straight in
+that directory instead — useful for piping captures into an external
+asciinema-collector pipeline.
+
+### File format
+
+asciinema v2 — see
+[the spec](https://docs.asciinema.org/manual/asciicast/v2/). In short,
+line 1 is a JSON header, every subsequent line is `[ts_s, "o"|"i",
+"<utf-8 text>"]`:
+
+```json
+{"version":2,"width":80,"height":24,"timestamp":1735200000,"title":"wlb cmd on win-host","env":{"TERM":"xterm-256color","SHELL":"cmd"}}
+[0.0,"o","Microsoft Windows [Version ...]\r\n"]
+[0.041,"o","\r\nC:\\>"]
+[1.732,"o","echo recorded-by-wlb\r\n"]
+[1.804,"o","recorded-by-wlb\r\n"]
+```
+
+Replay:
+
+```bash
+asciinema play workspace/hosts/<host>/pty/2026-05-25T10-30-00-cmd.cast
+asciinema upload workspace/hosts/<host>/pty/2026-05-25T10-30-00-cmd.cast
+# Convert to animated GIF
+agg input.cast output.gif
+```
+
+### Implementation
+
+```
+wlb.api.server.ws_pty
+  └─ transport.open_pty()  →  inner PtySession
+  └─ pty_recorder.maybe_wrap(inner, settings.pty_record, host=..., ...)
+       └─ enabled? → RecordingPtySession(inner, CastRecorder(path, ...))
+                       ├─ read():   forwards bytes + writes ["o", text]
+                       ├─ write():  forwards bytes + (optional) ["i", text]
+                       ├─ resize(): forwards
+                       └─ close():  closes both inner + recorder
+       └─ disabled → returns inner unchanged (zero overhead)
+```
+
+`CastRecorder` is concurrency-safe (`asyncio.Lock`) — read and write
+fire from different tasks but compete for the file. UTF-8 decoding uses
+`errors="replace"` so binary noise on the PTY (`pwsh -Encoding bytes`,
+control sequences) never corrupts the cast file.
+
+### Why default OFF
+
+A PTY recording captures every byte the user sees on the terminal,
+including any text a tool happens to dump (commit messages, file
+contents, API keys someone typed `--token` into). Opt-in keeps that
+data off-disk by default and matches asciinema's own behavior. When
+you turn it on, the recordings live in your workspace; nothing leaves
+the box unless you explicitly `asciinema upload`.
+
+`record_input=true` additionally captures every keystroke. Don't
+combine that with a session where you'd type a password.
+
+### Tests
+
+- `tests/capabilities/test_pty_recorder.py` (19 tests) — `.cast` header
+  + event encoding, UTF-8 replace, concurrent-safe close, path resolver
+  (workspace + override + traversal fallback), `maybe_wrap` gating,
+  end-to-end recording of a real `LocalPtySession`.
+- `tests/infra/test_profile.py` — 5 new tests for `[pty]` section +
+  `WLB_PTY_RECORD*` env override matrix.
+- `tests/transport/test_host_label.py` (8 tests) — every transport's
+  `host_label` resolves safely and refuses traversal.
+
+---
+
 ## What's next
 
-- **Recording / replay** (M3.7): asciinema-style cast files saved under
-  `workspace/hosts/<host>/pty/<ts>.cast`. Tap into the existing
-  `PtySession.read` / `write` boundary so all three transports record
-  uniformly.
+- **Replay UI** (potential M3.8): vendor `asciinema-player` JS bundle
+  next to the dashboard and add a `/casts.html` page that lists the
+  workspace's recordings + plays one inline.
 - **Real Windows walkthrough**: spin up Windows + OpenSSH + wlb-agent
   with `pywinpty`, verify the ConPTY paths (local + agent) for real.

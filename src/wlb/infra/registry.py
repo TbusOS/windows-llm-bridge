@@ -147,7 +147,8 @@ CAPABILITIES: list[CapabilitySpec] = [
         description="Interactive PTY in the browser (xterm.js + WebSocket). "
                     "ssh: asyncssh PTY channel; local: Unix pty.openpty() / "
                     "Windows ConPTY (pywinpty); http: WebSocket /v1/pty on "
-                    "wlb-agent (M3.6).",
+                    "wlb-agent (M3.6). Optional asciinema .cast recording "
+                    "(M3.7) — WLB_PTY_RECORD=1 or [pty] record=true.",
     ),
 ]
 
