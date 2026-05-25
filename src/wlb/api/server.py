@@ -36,6 +36,8 @@ from fastapi.staticfiles import StaticFiles
 from wlb import __version__
 from wlb.capabilities.filesync import push as cap_push  # noqa: F401 — reserved for M3.4
 from wlb.capabilities.pty_recorder import maybe_wrap as maybe_record_pty
+from wlb.capabilities.skill import get_skill as cap_get_skill
+from wlb.capabilities.skill import list_skills as cap_list_skills
 from wlb.capabilities.status import describe as cap_describe
 from wlb.capabilities.status import status as cap_status
 from wlb.capabilities.tool import list_tools as cap_list_tools
@@ -228,6 +230,40 @@ def create_app(profile_name: str | None = None) -> FastAPI:
         if not r.ok:
             raise HTTPException(status_code=404, detail=r.to_dict())
         return r.to_dict()
+
+    # ── skill packs (M3.11) ─────────────────────────────────────
+    @app.get("/api/skills")
+    async def api_skills() -> dict[str, Any]:
+        """List every skill pack (one per declared tool)."""
+        r = await cap_list_skills()
+        return r.to_dict()
+
+    # NOTE: the .json variant is registered BEFORE the bare {name} route so
+    # FastAPI's first-match wins on overlapping wildcards.
+    @app.get("/api/skills/{name}.json")
+    async def api_skill_get_json(name: str) -> dict[str, Any]:
+        """JSON-envelope variant of /api/skills/{name} for scripted callers."""
+        r = await cap_get_skill(name)
+        if not r.ok:
+            raise HTTPException(status_code=404, detail=r.to_dict())
+        return r.to_dict()
+
+    @app.get("/api/skills/{name}")
+    async def api_skill_get(name: str) -> Any:
+        """Serve one skill pack as plain ``text/markdown``.
+
+        Same payload as the MCP resource ``wlb-skill://<name>``. Append
+        ``.json`` to the path instead to get the structured wlb Result
+        envelope.
+        """
+        from fastapi.responses import PlainTextResponse
+
+        r = await cap_get_skill(name)
+        if not r.ok:
+            raise HTTPException(status_code=404, detail=r.to_dict())
+        return PlainTextResponse(
+            r.data["markdown"], media_type="text/markdown; charset=utf-8",
+        )
 
     # ── streaming: run a tool ───────────────────────────────────
     @app.websocket("/ws/tool/{name}")

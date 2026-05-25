@@ -86,6 +86,7 @@ A side-by-side:
 | tool       | `wlb tool list / show / run [--stream]` | `wlb_tool_list` / `wlb_tool_show` / `wlb_tool_run` | beta     | User-declared tools in TOML (command_template + progress/success/failure regex + workdir); `--stream` for live line/progress/match events (M3.1); args reject shell metachars; full output captured to workspace/hosts/.../tools/.../<ts>.log |
 | web        | `wlb web` / `wlb-api`     | —                              | beta     | Local dashboard (FastAPI + WebSocket) — status / registry / tool runner with live streaming. Localhost-only default; **no auth in M3.3** — front with an authenticated reverse proxy if exposed |
 | pty        | (browser) /pty.html       | —                              | beta     | Interactive PTY terminal (xterm.js + WebSocket). ssh = asyncssh PTY channel; local = Unix pty.openpty() or Windows ConPTY via pywinpty (`uv sync --extra windows-local-pty`); http = wlb-agent `WS /v1/pty` (M3.6). Optional asciinema `.cast` recording: `WLB_PTY_RECORD=1` or `[pty] record=true` (M3.7). Browse + replay at `/casts.html` (M3.8) |
+| skill      | `wlb skill list / show`   | `wlb_skill_list` / `wlb_skill_get` + Resource `wlb-skill://<name>` | beta     | Per-tool Markdown skill packs for LLM clients to preload; auto-generated header + optional `workspace/wlb-skills/<name>.md` operator extension; HTTP `/api/skills` + `/api/skills/<name>` (M3.11) |
 
 ---
 
@@ -189,6 +190,7 @@ windows-llm-bridge/
 | [docs/windows-side-setup.md](docs/windows-side-setup.md) | OpenSSH Server on Windows |
 | [docs/mcp-integration.md](docs/mcp-integration.md)       | MCP registration for Claude Code / Cursor |
 | [docs/walkthrough.md](docs/walkthrough.md)               | End-to-end real-Windows walkthrough (scripts + checklist in `walkthrough/`) |
+| [docs/skills.md](docs/skills.md)    | Skill packs — per-tool Markdown bundles an LLM client can preload (M3.11) |
 | [CLAUDE.md](CLAUDE.md)              | Rules for AI agents working on this repo  |
 
 ---

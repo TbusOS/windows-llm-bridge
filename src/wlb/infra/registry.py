@@ -150,6 +150,20 @@ CAPABILITIES: list[CapabilitySpec] = [
                     "wlb-agent (M3.6). Optional asciinema .cast recording "
                     "(M3.7) — WLB_PTY_RECORD=1 or [pty] record=true.",
     ),
+    CapabilitySpec(
+        name="skill",
+        impl_path="wlb.capabilities.skill",
+        cli_command="wlb skill list / show",
+        mcp_tools=["wlb_skill_list", "wlb_skill_get"],
+        supported_transports=["ssh", "local", "http"],
+        status="beta",
+        description="Per-tool skill packs for LLM clients to preload. "
+                    "Auto-generated header from the ToolSpec + optional "
+                    "operator-written body at workspace/wlb-skills/<name>.md. "
+                    "Surfaces: MCP resource wlb-skill://<name>, MCP tools "
+                    "wlb_skill_list / wlb_skill_get, CLI wlb skill list / show, "
+                    "HTTP /api/skills + /api/skills/<name> (M3.11).",
+    ),
 ]
 
 

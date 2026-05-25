@@ -9,6 +9,7 @@ SSH target name (sanitized). ``<category>`` is one of:
 - ``pulls``          — files pulled from the Windows side (M2)
 - ``screenshots``    — UI captures (M3)
 - ``pty``            — asciinema-style ``.cast`` PTY recordings (M3.7)
+- ``wlb-skills``     — operator-written skill-pack extensions per tool (M3.11)
 
 All ``<host>`` strings are validated against ``_SAFE_HOST_RE`` to refuse
 traversal attacks (``..``, embedded ``/``, etc.).

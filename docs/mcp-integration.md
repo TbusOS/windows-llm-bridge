@@ -256,6 +256,26 @@ plus an info ping every 50 stdout lines and a warning if the
 
 ---
 
+## Skill packs (M3.11)
+
+Beyond the tools listed above, wlb publishes one **MCP Resource** per
+declared tool: `wlb-skill://<tool-name>`. The body is a Markdown skill
+pack — auto-generated header (interpreter, args, regex hits) plus an
+optional operator-written extension at `workspace/wlb-skills/<name>.md`.
+
+LLM clients that surface Resources (Claude Code, Cursor, the MCP
+inspector) can preload these on connect and the agent gets full
+guidance for every tool before the conversation starts.
+
+Two helper tools cover clients that don't surface Resources yet:
+
+- `wlb_skill_list` — discover the available skill URIs.
+- `wlb_skill_get(name)` — fetch one as Markdown.
+
+Full details: `docs/skills.md`.
+
+---
+
 ## Verifying without an LLM client
 
 ```bash

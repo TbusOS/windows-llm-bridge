@@ -30,7 +30,8 @@
 | **M3.8**  | Replay UI — `/casts.html` + asciinema-player v3 + list/serve endpoints  | shipped |
 | **M3.9**  | Real-Windows walkthrough — scripts + checklist shipped (machine run TBD)| substrate shipped |
 | **M3.10** | MCP progress notifications — wlb_tool_run streams ctx.report_progress  | shipped |
-| **M3**    | Skill packs                                                             | in progress |
+| **M3.11** | Skill packs — per-tool LLM-preload bundles via MCP Resource / Tool / CLI / HTTP | shipped |
+| **M3**    | (M3 PTY + recording + replay UI + MCP + skill arc complete; further work optional) | shipped |
 
 ---
 
@@ -497,6 +498,65 @@ path runs unchanged.
 live progress bar climb 0→100% while a long-running declared tool
 emits "Progress: N%" lines, AND the final structured Result is the
 same with or without the progressToken.
+
+---
+
+## M3.11 — Skill packs (shipped)
+
+One Markdown bundle per declared tool, exposed everywhere a client
+might look. Header auto-generated from ToolSpec; optional operator body
+at `workspace/wlb-skills/<name>.md`.
+
+- [x] `src/wlb/capabilities/skill.py` (new):
+  - [x] `list_skills()` — names + descriptions + `skill_uri` +
+        `has_author_body` for every declared tool.
+  - [x] `get_skill(name)` — full markdown (header + optional body) or
+        `TOOL_NOT_FOUND` with suggestion.
+  - [x] `_render_skill(spec, author_body)` — deterministic header
+        layout: quick reference / command template / output parsing /
+        example invocation / "how wlb runs this" walkthrough.
+  - [x] `_load_author_body(name)` — read `workspace/wlb-skills/<name>.md`
+        if present; missing means "no author body" (not an error).
+- [x] `src/wlb/mcp/tools/skill.py` (new):
+  - [x] MCP **Resource**: `wlb-skill://{name}` mime `text/markdown` —
+        the canonical preload surface.
+  - [x] MCP **Tools**: `wlb_skill_list` / `wlb_skill_get` for clients
+        without Resources UI.
+- [x] `src/wlb/cli/skill_cli.py` (new): `wlb skill list` (Rich table)
+      + `wlb skill show <name>` (Rich-rendered by default, `--raw`
+      prints raw Markdown for piping).
+- [x] `src/wlb/api/server.py` — `GET /api/skills` (list),
+      `GET /api/skills/{name}` (raw markdown), `GET /api/skills/{name}.json`
+      (Result envelope). Route order matters — `.json` is registered
+      first so FastAPI's first-match wins on overlapping wildcards.
+- [x] `src/wlb/infra/workspace.py` — `wlb-skills` category in docstring.
+- [x] `src/wlb/infra/registry.py` — new `skill` capability entry.
+- [x] Tests (27 new, 368 total):
+  - [x] `tests/capabilities/test_skill.py` (8): empty list, list each
+        tool, author-body flag, TOOL_NOT_FOUND, minimal render,
+        args/workdir/regex render, author body append, allow_dangerous
+        in header.
+  - [x] `tests/mcp/test_skill.py` (7): list empty + with tools,
+        get returns markdown + handles unknown, resource template
+        registered + handler returns raw markdown, handler raises on
+        missing.
+  - [x] `tests/mcp/test_registration.py` — extended to assert
+        `wlb_skill_list` / `wlb_skill_get` + the
+        `wlb-skill://{name}` resource template are registered.
+  - [x] `tests/cli/test_skill.py` (6): list when no tools, list with
+        URIs, --json mode, show unknown exit≠0, --raw raw markdown,
+        author body rendered.
+  - [x] `tests/api/test_skill_endpoints.py` (6): list empty + with
+        tools, serve text/markdown, 404 missing, .json envelope
+        variant, author body appears in served markdown.
+- [x] Docs: `docs/skills.md` (full guide: layout, surfaces, authoring
+      flow with worked example, what the header emits, rationale).
+      `docs/mcp-integration.md` cross-link.
+
+**Done when:** With one tool declared, `wlb skill list` shows it with
+a `wlb-skill://<name>` URI; `wlb_skill_get` returns markdown; the MCP
+resource serves the same bytes; an operator can drop a sibling `.md`
+under `workspace/wlb-skills/` and see it merged in on next call.
 
 ---
 

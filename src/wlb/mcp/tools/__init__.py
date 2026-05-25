@@ -8,6 +8,7 @@ capability area's tools to the FastMCP instance. The server module calls
 from wlb.mcp.tools import cmd as cmd_tools
 from wlb.mcp.tools import filesync as filesync_tools
 from wlb.mcp.tools import powershell as powershell_tools
+from wlb.mcp.tools import skill as skill_tools
 from wlb.mcp.tools import status as status_tools
 from wlb.mcp.tools import tool as tool_tools
 
@@ -18,3 +19,4 @@ def register_all(mcp) -> None:  # noqa: ANN001 — FastMCP import lazy in server
     powershell_tools.register(mcp)
     filesync_tools.register(mcp)
     tool_tools.register(mcp)
+    skill_tools.register(mcp)
