@@ -187,6 +187,75 @@ without a strong case.
 
 ---
 
+## Progress notifications (M3.10)
+
+Long-running tools surface mid-flight progress via the standard MCP
+[`notifications/progress`](https://modelcontextprotocol.io/specification/server/utilities/progress)
+channel. Wire it up once and any compliant client picks it up.
+
+### How a client opts in
+
+Clients that want progress send a request `_meta.progressToken` (the
+MCP SDK does this transparently when you supply one). FastMCP exposes
+the token through a `Context` parameter; wlb uses it to call
+`ctx.report_progress(progress, total, message)`.
+
+If a client doesn't send a `progressToken`, `wlb_tool_run` falls back
+to the original one-shot path — no progress noise, same final Result.
+This is fully backwards compatible.
+
+### What wlb_tool_run emits
+
+For each invocation, the wrapper translates `ToolStreamEvent`s coming
+out of `run_tool_stream` into MCP notifications:
+
+| Stream event                                  | MCP notification                                  |
+|-----------------------------------------------|---------------------------------------------------|
+| `kind=progress, percent=N`                    | `notifications/progress` `progress=N total=100`   |
+| `kind=match, pattern_label=success`           | `notifications/message` level `info`              |
+| `kind=match, pattern_label=failure`           | `notifications/message` level `warning`           |
+| `kind=line` (every 50th)                      | `notifications/message` level `info`              |
+| `kind=done`                                   | `notifications/progress` `progress=100 total=100` (caps the bar even when no `progress_re` ever hit) |
+
+The final `tools/call` response is the same structured Result as before
+(`{ok, data, error, artifacts, timing_ms}`). Progress notifications are
+strictly additive — clients that ignore them still get the right answer
+at the end.
+
+### Example: declaring a tool with a progress regex
+
+```toml
+# wlb-tools.toml
+[tools.vendor_flash]
+interpreter = "cmd"
+description = "Flash firmware via vendor tool"
+command_template = '"C:\Tools\vendor_flash.exe" --image "{image}" --port {port}'
+args         = ["image", "port"]
+timeout      = 600
+
+[tools.vendor_flash.regex]
+# Vendor tool prints "Progress: 42%" mid-flight; capture group 1 is the %.
+progress = '^Progress:\s+(\d{1,3})%'
+success  = '^Flash complete'
+failure  = '^(ERROR|Failed):'
+```
+
+When an LLM agent calls `wlb_tool_run("vendor_flash", {"image": ..., "port": ...})`
+with a `progressToken` in the request, the client sees a live progress
+indicator climb 0→100% as the flasher emits its "Progress: N%" lines,
+plus an info ping every 50 stdout lines and a warning if the
+`failure` regex hits.
+
+### Other tools
+
+- `wlb_status`, `wlb_describe`, `wlb_cmd`, `wlb_powershell`,
+  `wlb_push`, `wlb_pull`, `wlb_tool_list`, `wlb_tool_show` — fast or
+  fixed-duration; no progress notifications emitted.
+- Only `wlb_tool_run` benefits from the streaming + regex parsing
+  needed to drive a progress bar honestly.
+
+---
+
 ## Verifying without an LLM client
 
 ```bash

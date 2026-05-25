@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from wlb.infra.config import load_active
@@ -552,6 +553,110 @@ async def run_tool_stream(
         kind="done",
         ok=True,
         output=ToolRunOutput(**{**output.to_dict(), "success": True}),
+    )
+
+
+# ─── run_tool_with_progress (M3.10) ──────────────────────────────
+
+
+async def run_tool_with_progress(
+    transport: Transport,
+    name: str,
+    args: dict[str, str] | None = None,
+    *,
+    on_event: Callable[[ToolStreamEvent], Awaitable[None]] | None = None,
+) -> Result[ToolRunOutput]:
+    """Run a tool with mid-flight events, returning a single aggregated Result.
+
+    Bridges the streaming + single-result patterns:
+
+    - :func:`run_tool_stream` is for callers that consume events live (the
+      Web UI WebSocket, the ``--stream`` CLI flag).
+    - :func:`run_tool` is for callers that just want one structured result
+      at the end.
+    - :func:`run_tool_with_progress` is for callers that want BOTH —
+      mid-flight notifications AND a single final :class:`Result`. The
+      primary user is the MCP tool wrapper, which emits
+      ``notifications/progress`` via ``ctx.report_progress`` as
+      ``progress`` events arrive and returns one structured result when
+      the run finishes.
+
+    ``on_event`` is invoked for every :class:`ToolStreamEvent` from the
+    underlying :func:`run_tool_stream`. It MUST NOT raise — any exception
+    is swallowed so a misbehaving callback can't kill the run. The
+    callback is awaited synchronously between events; keep it fast.
+
+    The returned :class:`Result` shape matches :func:`run_tool` exactly,
+    so callers can render it identically.
+    """
+    last_event: ToolStreamEvent | None = None
+
+    async for ev in run_tool_stream(transport, name, args):
+        if on_event is not None:
+            try:
+                await on_event(ev)
+            except Exception:                  # noqa: BLE001 — best-effort
+                pass
+        if ev.kind == "done":
+            last_event = ev
+            break
+
+    return _stream_done_to_result(name, last_event)
+
+
+def _stream_done_to_result(
+    name: str,
+    done: ToolStreamEvent | None,
+) -> Result[ToolRunOutput]:
+    """Convert the terminal ``done`` event into the same Result shape run_tool returns.
+
+    Lossy by construction — the streaming path emits less verbose error
+    messages than :func:`run_tool` does. We restore the suggestion + tool
+    name + log path where possible so MCP clients still see useful
+    diagnostics.
+    """
+    if done is None:
+        return fail(
+            code="TOOL_STREAM_INCOMPLETE",
+            message=f"{name}: stream ended without a terminal done event",
+            suggestion=(
+                "Likely a transport bug — file an issue at "
+                "https://github.com/TbusOS/windows-llm-bridge/issues."
+            ),
+            category="tool",
+            details={"tool": name},
+        )
+
+    output = done.output
+
+    # Setup-stage failures: no output, plain error_code (TOOL_NOT_FOUND, etc.).
+    if output is None:
+        code = done.error_code or "TOOL_FAILED"
+        return fail(
+            code=code,
+            message=done.line or f"{name}: {code}",
+            suggestion=_suggest_for(code),
+            category="transport" if code in _TRANSPORT_ERROR_CODES else "tool",
+            details={"tool": name, "stream_done": done.to_dict()},
+        )
+
+    if done.ok:
+        return ok(
+            data=output,
+            artifacts=[Path(output.log_path)] if output.log_path else [],
+            timing_ms=output.duration_ms,
+        )
+
+    # ok=False with an output → TOOL_FAILED equivalent (failure regex hit,
+    # expected success regex missed, or non-zero exit). Map to the same
+    # error code run_tool would emit so MCP clients see consistent codes.
+    return fail(
+        code="TOOL_FAILED",
+        message=f"{name}: exit_code={output.exit_code}, see log",
+        suggestion="Inspect details.log_path for the full output.",
+        category="tool",
+        details=output.to_dict(),
+        timing_ms=output.duration_ms,
     )
 
 

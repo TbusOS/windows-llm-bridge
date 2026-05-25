@@ -29,7 +29,8 @@
 | **M3.7**  | PTY recording — asciinema v2 `.cast` writer at PtySession boundary      | shipped |
 | **M3.8**  | Replay UI — `/casts.html` + asciinema-player v3 + list/serve endpoints  | shipped |
 | **M3.9**  | Real-Windows walkthrough — scripts + checklist shipped (machine run TBD)| substrate shipped |
-| **M3**    | Skill packs + MCP progress notifications                                | in progress |
+| **M3.10** | MCP progress notifications — wlb_tool_run streams ctx.report_progress  | shipped |
+| **M3**    | Skill packs                                                             | in progress |
 
 ---
 
@@ -445,6 +446,57 @@ notes — not the repo.
 Windows host and reach `5/5 passed` on `03-smoke-tests.sh`. Actual
 execution and result recording are local to each operator — the
 substrate proves we've shipped enough to make that one-off cheap.
+
+---
+
+## M3.10 — MCP progress notifications (shipped)
+
+`wlb_tool_run` now emits standard MCP `notifications/progress` mid-run
+when the calling client supplied a `progressToken`. Fully backwards
+compatible — no token means no progress noise and the existing one-shot
+path runs unchanged.
+
+- [x] `src/wlb/capabilities/tool.py`:
+  - [x] `run_tool_with_progress(transport, name, args, *, on_event)` —
+        new public function that drives `run_tool_stream` and invokes
+        `on_event` for every event, then returns a single aggregated
+        `Result[ToolRunOutput]` with the same shape as `run_tool`.
+  - [x] `_stream_done_to_result()` helper converts the terminal `done`
+        event back into a Result (lossy on free-text suggestion fields
+        but preserves error codes + details).
+  - [x] `on_event` exceptions are swallowed so a misbehaving callback
+        can never poison the run.
+- [x] `src/wlb/mcp/tools/tool.py`:
+  - [x] `wlb_tool_run` now takes `ctx=None` (FastMCP auto-injects when
+        the client passes a `progressToken`).
+  - [x] When ctx is present, drives `run_tool_with_progress` with an
+        inline `_on_event` that maps:
+        - `progress` → `ctx.report_progress(progress, 100, msg)`
+        - `match`/failure → `ctx.warning(...)`
+        - `match`/success → `ctx.info(...)`
+        - every 50th `line` → `ctx.info("N lines streamed")`
+        - `done` → always a final `ctx.report_progress(100, 100, msg)`
+          so progress bars settle even when `progress_re` never hit 100.
+  - [x] When ctx is None, falls through to the existing
+        `run_tool` one-shot path.
+- [x] Tests (13 new, 341 total):
+  - [x] `tests/capabilities/test_run_tool_with_progress.py` (7):
+        happy-path event forwarding, artifacts include log_path on
+        success, no-callback variant, failure-regex → TOOL_FAILED,
+        TOOL_NOT_FOUND propagation, TOOL_ARG_MISSING propagation,
+        callback-exception isolation.
+  - [x] `tests/mcp/test_tool_run_progress.py` (6): no-context fallback,
+        progress events fire for each regex hit, failure → warning,
+        success → info, line milestones every 50, done caps at 100.
+- [x] Docs: `docs/mcp-integration.md` "Progress notifications (M3.10)"
+      section — opt-in model, event-to-notification table, full
+      `wlb-tools.toml` example with `progress_re`, scope note (only
+      `wlb_tool_run` emits progress).
+
+**Done when:** A FastMCP client that wires up a progressToken sees a
+live progress bar climb 0→100% while a long-running declared tool
+emits "Progress: N%" lines, AND the final structured Result is the
+same with or without the progressToken.
 
 ---
 
