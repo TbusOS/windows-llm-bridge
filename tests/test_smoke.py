@@ -7,7 +7,7 @@ def test_package_imports() -> None:
     import wlb
 
     assert wlb.__version__
-    assert wlb.__license__ == "MIT"
+    assert wlb.__license__ == "Apache-2.0"
 
 
 def test_registry_non_empty() -> None:

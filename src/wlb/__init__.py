@@ -7,6 +7,6 @@ scope of the project.
 __version__ = "0.0.1"
 __author__ = "sky"
 __email__ = "skyzhangbinghua@gmail.com"
-__license__ = "MIT"
+__license__ = "Apache-2.0"
 
 __all__ = ["__version__"]

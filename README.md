@@ -3,7 +3,7 @@
 > 让 LLM Agent 像调函数一样驱动一台 Windows 主机：跑 `cmd.exe` / PowerShell、
 > 推拉文件、调用厂商专用的 Windows 工具，统一返回 `{ok, data, error, artifacts}`。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Status: M0 bootstrap](https://img.shields.io/badge/status-M0%20bootstrap-orange.svg)](PLAN.md)
 
@@ -194,4 +194,5 @@ PR 之前请通读 [`CLAUDE.md`](CLAUDE.md) 和 [`PLAN.md`](PLAN.md)。
 
 ## 许可
 
-MIT — 见 [`LICENSE`](LICENSE)。
+Apache License 2.0 —— 见 [`LICENSE`](LICENSE) 和 [`NOTICE`](NOTICE)。
+2026-10-10 之前发布的版本采用 MIT 许可,已经拿到的副本仍按 MIT 使用。

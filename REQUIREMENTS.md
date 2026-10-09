@@ -133,7 +133,7 @@ with a pointer to a better-suited project.
 
 ## 6. Constraints
 
-- **License:** MIT.
+- **License:** Apache 2.0 (MIT before 2026-10-10).
 - **Python:** 3.11+ on the controller side. Windows side just needs
   OpenSSH Server (Windows 10 1809+ / Windows 11 / Windows Server 2019+,
   built-in optional feature).

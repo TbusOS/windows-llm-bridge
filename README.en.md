@@ -4,7 +4,7 @@
 > / PowerShell, push and pull files, invoke vendor tooling that only ships
 > as Windows binaries — all returning `{ok, data, error, artifacts}`.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Status: M0 bootstrap](https://img.shields.io/badge/status-M0%20bootstrap-orange.svg)](PLAN.md)
 
@@ -209,4 +209,5 @@ Highlights:
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Releases before 2026-10-10 were MIT-licensed; copies obtained under those terms remain MIT.

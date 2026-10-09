@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "A Windows shell / tool bridge designed for LLM agents (MCP / CLI / Web API)."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
     { name = "sky", email = "skyzhangbinghua@gmail.com" },
 ]
@@ -12,7 +12,7 @@ keywords = ["windows", "ssh", "powershell", "cmd", "llm", "mcp", "agent", "autom
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
